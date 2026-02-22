@@ -170,16 +170,35 @@ export async function registerRoutes(
 
       const voice = dbDialogue.speaker === 'A' ? project.speakerAVoice : project.speakerBVoice;
       
-      const audioResponse = await openai.audio.speech.create({
-        model: "tts-1",
-        voice: voice as any,
-        input: dbDialogue.text,
-        response_format: "mp3"
+      // Using Gemini 2.5 Flash for audio generation (Google TTS 2.5 equivalent in Replit AI)
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: `Convert this text to speech with a natural debate tone: "${dbDialogue.text}"`,
+        config: {
+          responseModalities: ["text", "audio"],
+        }
       });
 
-      const buffer = Buffer.from(await audioResponse.arrayBuffer());
-      const base64 = buffer.toString('base64');
-      const dataUrl = `data:audio/mp3;base64,${base64}`;
+      const candidate = response.candidates?.[0];
+      const audioPart = candidate?.content?.parts?.find((part: any) => part.inlineData);
+
+      if (!audioPart?.inlineData?.data) {
+        // Fallback to OpenAI TTS if Gemini audio fails or is not supported for this specific model variant
+        const audioResponse = await openai.audio.speech.create({
+          model: "tts-1",
+          voice: voice as any,
+          input: dbDialogue.text,
+          response_format: "mp3"
+        });
+        const buffer = Buffer.from(await audioResponse.arrayBuffer());
+        const base64 = buffer.toString('base64');
+        const dataUrl = `data:audio/mp3;base64,${base64}`;
+        const updated = await storage.updateDialogue(dialogueId, { audioUrl: dataUrl });
+        return res.json(updated);
+      }
+
+      const mimeType = audioPart.inlineData.mimeType || "audio/mp3";
+      const dataUrl = `data:${mimeType};base64,${audioPart.inlineData.data}`;
 
       const updated = await storage.updateDialogue(dialogueId, { audioUrl: dataUrl });
       res.json(updated);
