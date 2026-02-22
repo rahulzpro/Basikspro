@@ -147,19 +147,35 @@ export async function registerRoutes(
       const project = await storage.getProject(projectId);
       if (!project) return res.status(404).json({ message: "Project not found" });
 
+      const { context } = req.body as { context?: string };
+
+      // Map numeric duration (minutes) to number of argument rounds
+      const durationMins = parseInt(project.duration) || 7;
+      let rounds: number;
+      if (durationMins <= 1) rounds = 1;
+      else if (durationMins <= 5) rounds = 3;
+      else if (durationMins <= 8) rounds = 4;
+      else if (durationMins <= 15) rounds = 6;
+      else if (durationMins <= 20) rounds = 8;
+      else if (durationMins <= 25) rounds = 10;
+      else if (durationMins <= 30) rounds = 12;
+      else rounds = 15;
+
       const narratorName = project.speakerNarratorName || "Narrator";
-      const prompt = `Generate a ${project.duration} debate script on the topic: "${project.topic}".
+      const contextSection = context ? `\n\nReference Context:\n${context.slice(0, 3000)}\nUse this context to inform the debate content.\n` : "";
+
+      const prompt = `Generate a ${durationMins}-minute debate script on the topic: "${project.topic}".${contextSection}
 The debate has three participants:
 - ${project.speakerAName} (Speaker A) - argues FOR the topic
 - ${project.speakerBName} (Speaker B) - argues AGAINST the topic
 - ${narratorName} (Narrator N) - introduces each round with a brief context sentence
 
 Structure each debate round as:
-1. Narrator N: A short 1-2 sentence intro for the upcoming argument point (e.g. "In this round, both speakers address the question of...")
-2. Speaker A: Their argument (3-5 sentences)
-3. Speaker B: Their counter-argument (3-5 sentences)
+1. Narrator N: A short 1-2 sentence intro for the upcoming argument point
+2. Speaker A: Their argument (3-6 sentences, substantive and detailed)
+3. Speaker B: Their counter-argument (3-6 sentences, substantive and detailed)
 
-Generate 3-5 such rounds depending on the duration (short=3, medium=4, long=5).
+Generate exactly ${rounds} such rounds.
 
 Output ONLY a valid JSON array where each element has 'speaker' ('A', 'B', or 'N') and 'text'.
 Example: [{"speaker":"N","text":"..."},{"speaker":"A","text":"..."},{"speaker":"B","text":"..."}]

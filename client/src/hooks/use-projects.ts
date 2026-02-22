@@ -96,19 +96,19 @@ export function useUpdateDialogue() {
 export function useGenerateScript() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (projectId: number) => {
+    mutationFn: async ({ projectId, context }: { projectId: number; context?: string }) => {
       const url = buildUrl(api.ai.generateScript.path, { id: projectId });
       const res = await fetch(url, {
         method: api.ai.generateScript.method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ context }),
         credentials: "include",
       });
       if (!res.ok) throw new Error("Failed to generate script");
       return api.ai.generateScript.responses[200].parse(await res.json());
     },
-    onSuccess: (_, projectId) => {
-      queryClient.invalidateQueries({ queryKey: [api.projects.get.path, projectId] });
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: [api.projects.get.path, variables.projectId] });
     },
   });
 }

@@ -68,7 +68,7 @@ export const api = {
     generateScript: {
       method: 'POST' as const,
       path: '/api/projects/:id/generate-script' as const,
-      input: z.object({}), // Uses project details from DB
+      input: z.object({ context: z.string().optional() }),
       responses: {
         200: z.array(z.custom<typeof dialogues.$inferSelect>()),
         400: errorSchemas.validation,
