@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import {
   useProject, useUpdateProject, useUpdateDialogue,
-  useGenerateScript, useRewriteDialogue, useGenerateAudio
+  useGenerateScript, useRewriteDialogue, useGenerateAudio, useGenerateTranscript
 } from "@/hooks/use-projects";
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
@@ -25,6 +25,25 @@ const AI_MODELS = [
 
 const TEXT_SIZES = { small: "text-xs sm:text-sm", medium: "text-sm sm:text-xl", large: "text-xl sm:text-3xl" };
 const BOX_PAD   = { small: "px-3 py-2", medium: "px-5 py-3", large: "px-7 py-4" };
+
+// Audio provider configs
+const AUDIO_PROVIDERS = [
+  { id: "openai", name: "OpenAI TTS", badge: "Default", desc: "High quality, 6 voices" },
+  { id: "gemini", name: "Gemini TTS", badge: "Google", desc: "Google AI voices" },
+  { id: "elevenlabs", name: "ElevenLabs", badge: "Pro", desc: "Ultra-realistic" },
+];
+const OPENAI_VOICES = ["alloy","echo","fable","onyx","nova","shimmer"].map(v => ({ id: v, name: v[0].toUpperCase() + v.slice(1) }));
+const GEMINI_VOICES = ["Kore","Charon","Fenrir","Aoede","Puck","Leda"].map(v => ({ id: v, name: v }));
+const ELEVENLABS_VOICES = [
+  { id: "Rachel", name: "Rachel" }, { id: "Bella", name: "Bella" },
+  { id: "Antoni", name: "Antoni" }, { id: "Elli", name: "Elli" },
+  { id: "Josh", name: "Josh" }, { id: "Arnold", name: "Arnold" },
+];
+function getVoicesForProvider(provider: string) {
+  if (provider === "gemini") return GEMINI_VOICES;
+  if (provider === "elevenlabs") return ELEVENLABS_VOICES;
+  return OPENAI_VOICES;
+}
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 function hashText(text: string) {
@@ -215,11 +234,12 @@ function Step1Setup({ project, onNext }: { project: any; onNext: () => void }) {
   const [topic, setTopic] = useState(project.topic === "Untitled Debate" ? "" : project.topic);
   const [duration, setDuration] = useState(project.duration || "medium");
   const [model, setModel] = useState(project.model || "gemini-3-flash-preview");
+  const [audioProvider, setAudioProvider] = useState(project.audioProvider || "openai");
 
   return (
     <div className="max-w-xl mx-auto glass-panel p-6 sm:p-10 rounded-3xl">
       <h2 className="text-2xl font-display font-bold text-white mb-1">Configure Debate</h2>
-      <p className="text-muted-foreground mb-8 text-sm">Set the topic, duration and AI model.</p>
+      <p className="text-muted-foreground mb-8 text-sm">Set the topic, duration, AI model and audio provider.</p>
       <div className="space-y-7">
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-2">Debate Topic</label>
@@ -247,8 +267,20 @@ function Step1Setup({ project, onNext }: { project: any; onNext: () => void }) {
             ))}
           </div>
         </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-300 mb-2">Audio Provider</label>
+          <div className="space-y-2">
+            {AUDIO_PROVIDERS.map(p => (
+              <div key={p.id} onClick={() => setAudioProvider(p.id)} className={`p-3 rounded-xl border cursor-pointer flex items-center gap-3 ${audioProvider === p.id ? "bg-primary/10 border-primary" : "bg-black/20 border-white/10 hover:border-white/30"}`}>
+                <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${audioProvider === p.id ? "border-primary" : "border-gray-500"}`}>{audioProvider === p.id && <div className="w-2 h-2 bg-primary rounded-full" />}</div>
+                <div className="flex-1"><span className={`font-semibold text-sm ${audioProvider === p.id ? "text-white" : "text-gray-300"}`}>{p.name}</span></div>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full ${audioProvider === p.id ? "bg-primary/20 text-primary" : "bg-white/10 text-gray-500"}`}>{p.badge}</span>
+              </div>
+            ))}
+          </div>
+        </div>
         <div className="flex justify-end pt-2">
-          <button onClick={async () => { if (!topic.trim()) return; await upd.mutateAsync({ id: project.id, topic, duration, model }); onNext(); }} disabled={!topic.trim() || upd.isPending} className="flex items-center px-7 py-3 bg-primary text-white font-bold rounded-xl hover:bg-primary/90 disabled:opacity-50">
+          <button onClick={async () => { if (!topic.trim()) return; await upd.mutateAsync({ id: project.id, topic, duration, model, audioProvider }); onNext(); }} disabled={!topic.trim() || upd.isPending} className="flex items-center px-7 py-3 bg-primary text-white font-bold rounded-xl hover:bg-primary/90 disabled:opacity-50">
             {upd.isPending && <Loader2 className="w-4 h-4 animate-spin mr-2" />} Continue <ArrowRight className="w-4 h-4 ml-2" />
           </button>
         </div>
@@ -265,32 +297,41 @@ function Step2Script({ project, onNext }: { project: any; onNext: () => void }) 
   const rewriteDialogue = useRewriteDialogue();
   const [speakerA, setSpeakerA] = useState(project.speakerAName);
   const [speakerB, setSpeakerB] = useState(project.speakerBName);
+  const [narrator, setNarrator] = useState(project.speakerNarratorName || "Narrator");
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editText, setEditText] = useState("");
   const [rewritingId, setRewritingId] = useState<number | null>(null);
   const [rwInstr, setRwInstr] = useState("");
 
-  const saveNames = () => { if (speakerA !== project.speakerAName || speakerB !== project.speakerBName) updateProject.mutate({ id: project.id, speakerAName: speakerA, speakerBName: speakerB }); };
+  const saveNames = () => {
+    const updates: any = { id: project.id };
+    if (speakerA !== project.speakerAName) updates.speakerAName = speakerA;
+    if (speakerB !== project.speakerBName) updates.speakerBName = speakerB;
+    if (narrator !== project.speakerNarratorName) updates.speakerNarratorName = narrator;
+    if (Object.keys(updates).length > 1) updateProject.mutate(updates);
+  };
 
   if (!project.dialogues?.length) return (
     <div className="flex flex-col items-center justify-center text-center max-w-md mx-auto py-16">
       <div className="w-20 h-20 bg-primary/20 rounded-full flex items-center justify-center mb-6"><FileText className="w-10 h-10 text-primary" /></div>
       <h2 className="text-2xl font-bold text-white mb-3">Generate Script</h2>
-      <p className="text-muted-foreground mb-7 text-sm">AI will draft the debate for: <strong className="text-white block mt-1">"{project.topic}"</strong></p>
+      <p className="text-muted-foreground mb-7 text-sm">AI will draft the debate with narrator for: <strong className="text-white block mt-1">"{project.topic}"</strong></p>
       <button onClick={() => generateScript.mutateAsync(project.id)} disabled={generateScript.isPending} className="px-7 py-3.5 bg-gradient-to-r from-primary to-indigo-600 text-white font-bold rounded-xl flex items-center gap-2">
         {generateScript.isPending ? <><Loader2 className="w-5 h-5 animate-spin" /> Generating...</> : <>Generate Script with AI</>}
       </button>
     </div>
   );
 
-  const dialogues: any[] = project.dialogues;
-  const aD = dialogues.filter(d => d.speaker === "A");
-  const bD = dialogues.filter(d => d.speaker === "B");
-  const rows = Math.max(aD.length, bD.length);
+  const dialogues: any[] = [...(project.dialogues || [])].sort((a: any, b: any) => a.sequence - b.sequence);
 
-  const Cell = ({ d, side }: { d: any; side: "A" | "B" }) => {
-    if (!d) return <div className="p-4 text-gray-600 text-xs italic">—</div>;
-    const col = side === "A" ? "indigo" : "cyan";
+  const speakerColor = (s: string) => s === "A" ? "indigo" : s === "B" ? "cyan" : "amber";
+  const speakerName = (s: string) => s === "A" ? speakerA : s === "B" ? speakerB : narrator;
+
+  const Cell = ({ d }: { d: any }) => {
+    const col = speakerColor(d.speaker);
+    const gradientFrom = col === "indigo" ? "from-indigo-500 to-indigo-700" : col === "cyan" ? "from-cyan-500 to-cyan-700" : "from-amber-500 to-amber-700";
+    const textCol = col === "indigo" ? "text-indigo-400" : col === "cyan" ? "text-cyan-400" : "text-amber-400";
+
     if (editingId === d.id) return (
       <div className="p-3 space-y-2">
         <textarea value={editText} onChange={e => setEditText(e.target.value)} className="w-full h-24 glass-input p-2 rounded-lg resize-none text-white text-sm" autoFocus />
@@ -303,10 +344,10 @@ function Step2Script({ project, onNext }: { project: any; onNext: () => void }) 
     if (rewritingId === d.id) return (
       <div className="p-3 space-y-2">
         <div className="p-2 bg-black/30 rounded text-gray-400 text-[11px] line-clamp-2">"{d.text}"</div>
-        <input value={rwInstr} onChange={e => setRwInstr(e.target.value)} placeholder="Make it more aggressive..." className="w-full glass-input p-2 rounded text-white text-xs" autoFocus />
+        <input value={rwInstr} onChange={e => setRwInstr(e.target.value)} placeholder={d.speaker === "N" ? "Make it more dramatic..." : "Make it more aggressive..."} className="w-full glass-input p-2 rounded text-white text-xs" autoFocus />
         <div className="flex justify-end gap-2">
           <button onClick={() => setRewritingId(null)} className="px-2 py-1 text-xs text-gray-400">Cancel</button>
-          <button onClick={async () => { await rewriteDialogue.mutateAsync({ dialogueId: d.id, projectId: project.id, instructions: rwInstr }); setRewritingId(null); setRwInstr(""); }} disabled={!rwInstr || rewriteDialogue.isPending} className={`px-2 py-1 text-xs text-white rounded bg-gradient-to-r ${col === "indigo" ? "from-indigo-500 to-indigo-700" : "from-cyan-500 to-cyan-700"} flex items-center gap-1`}>
+          <button onClick={async () => { await rewriteDialogue.mutateAsync({ dialogueId: d.id, projectId: project.id, instructions: rwInstr }); setRewritingId(null); setRwInstr(""); }} disabled={!rwInstr || rewriteDialogue.isPending} className={`px-2 py-1 text-xs text-white rounded bg-gradient-to-r ${gradientFrom} flex items-center gap-1`}>
             {rewriteDialogue.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />} AI Rewrite
           </button>
         </div>
@@ -317,11 +358,28 @@ function Step2Script({ project, onNext }: { project: any; onNext: () => void }) 
         <p className="text-gray-100 text-xs sm:text-sm leading-relaxed">{d.text}</p>
         <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 flex gap-1">
           <button onClick={() => { setEditingId(d.id); setEditText(d.text); }} className="p-1 text-gray-400 hover:text-white hover:bg-white/10 rounded"><Edit2 className="w-3 h-3" /></button>
-          <button onClick={() => setRewritingId(d.id)} className={`p-1 hover:bg-white/10 rounded ${col === "indigo" ? "text-indigo-400" : "text-cyan-400"}`}><Wand2 className="w-3 h-3" /></button>
+          <button onClick={() => setRewritingId(d.id)} className={`p-1 hover:bg-white/10 rounded ${textCol}`}><Wand2 className="w-3 h-3" /></button>
         </div>
       </div>
     );
   };
+
+  // Group dialogues into rounds: narrator (optional) + A/B pair
+  const rounds: { narrator?: any; speakerA?: any; speakerB?: any }[] = [];
+  let cur: { narrator?: any; speakerA?: any; speakerB?: any } = {};
+  for (const d of dialogues) {
+    if (d.speaker === "N") {
+      if (cur.speakerA || cur.speakerB || cur.narrator) { rounds.push(cur); cur = {}; }
+      cur.narrator = d;
+    } else if (d.speaker === "A") {
+      if (cur.speakerA) { rounds.push(cur); cur = { narrator: undefined }; }
+      cur.speakerA = d;
+    } else {
+      cur.speakerB = d;
+      rounds.push(cur); cur = {};
+    }
+  }
+  if (cur.narrator || cur.speakerA || cur.speakerB) rounds.push(cur);
 
   return (
     <div className="max-w-5xl mx-auto flex flex-col" style={{ height: "calc(100vh - 130px)" }}>
@@ -335,7 +393,8 @@ function Step2Script({ project, onNext }: { project: any; onNext: () => void }) 
         </div>
       </div>
       <div className="flex-1 overflow-y-auto rounded-2xl border border-white/10 overflow-hidden">
-        <div className="grid grid-cols-2 sticky top-0 z-10">
+        {/* Speaker name headers */}
+        <div className="grid grid-cols-[1fr_1fr] sticky top-0 z-10">
           <div className="bg-indigo-900/70 backdrop-blur border-b border-r border-white/10 p-3 flex items-center gap-2">
             <div className="w-7 h-7 rounded-full bg-indigo-500/30 text-indigo-300 flex items-center justify-center font-bold text-xs shrink-0">A</div>
             <input value={speakerA} onChange={e => setSpeakerA(e.target.value)} onBlur={saveNames} className="bg-transparent border-none text-white font-bold focus:outline-none w-full text-sm" />
@@ -345,10 +404,30 @@ function Step2Script({ project, onNext }: { project: any; onNext: () => void }) 
             <input value={speakerB} onChange={e => setSpeakerB(e.target.value)} onBlur={saveNames} className="bg-transparent border-none text-white font-bold focus:outline-none w-full text-sm" />
           </div>
         </div>
-        {Array.from({ length: rows }).map((_, i) => (
-          <div key={i} className="grid grid-cols-2 border-b border-white/5">
-            <div className={`border-r border-white/5 min-h-[70px] ${aD[i] ? "bg-indigo-500/[0.04]" : ""}`}><Cell d={aD[i] || null} side="A" /></div>
-            <div className={`min-h-[70px] ${bD[i] ? "bg-cyan-500/[0.04]" : ""}`}><Cell d={bD[i] || null} side="B" /></div>
+
+        {rounds.map((round, i) => (
+          <div key={i}>
+            {/* Narrator row (full-width) */}
+            {round.narrator && (
+              <div className="border-b border-amber-500/20 bg-amber-500/[0.06]">
+                <div className="flex items-center gap-2 px-3 pt-2">
+                  <div className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-[10px] shrink-0">N</div>
+                  <input value={narrator} onChange={e => setNarrator(e.target.value)} onBlur={saveNames} className="bg-transparent border-none text-amber-400 font-bold focus:outline-none text-xs" />
+                </div>
+                <Cell d={round.narrator} />
+              </div>
+            )}
+            {/* A | B row */}
+            {(round.speakerA || round.speakerB) && (
+              <div className="grid grid-cols-2 border-b border-white/5">
+                <div className={`border-r border-white/5 min-h-[70px] ${round.speakerA ? "bg-indigo-500/[0.04]" : ""}`}>
+                  {round.speakerA ? <Cell d={round.speakerA} /> : <div className="p-4 text-gray-600 text-xs italic">—</div>}
+                </div>
+                <div className={`min-h-[70px] ${round.speakerB ? "bg-cyan-500/[0.04]" : ""}`}>
+                  {round.speakerB ? <Cell d={round.speakerB} /> : <div className="p-4 text-gray-600 text-xs italic">—</div>}
+                </div>
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -360,15 +439,27 @@ function Step2Script({ project, onNext }: { project: any; onNext: () => void }) 
 function Step3Audio({ project, onNext }: { project: any; onNext: () => void }) {
   const upd = useUpdateProject();
   const genAudio = useGenerateAudio();
+  const [provider, setProvider] = useState(project.audioProvider || "openai");
   const [voiceA, setVoiceA] = useState(project.speakerAVoice);
   const [voiceB, setVoiceB] = useState(project.speakerBVoice);
+  const [voiceN, setVoiceN] = useState(project.speakerNarratorVoice || "shimmer");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [captionsDone, setCaptionsDone] = useState(false);
 
-  const voices = ["alloy","echo","fable","onyx","nova","shimmer"].map(v => ({ id: v, name: v[0].toUpperCase() + v.slice(1) }));
-  const saveVoices = (a: string, b: string) => upd.mutate({ id: project.id, speakerAVoice: a, speakerBVoice: b });
+  const voices = getVoicesForProvider(provider);
+  const saveVoice = (key: string, val: string) => upd.mutate({ id: project.id, [key]: val });
   const allDone = project.dialogues?.every((d: any) => d.audioUrl);
+
+  const switchProvider = (p: string) => {
+    setProvider(p);
+    const newVoices = getVoicesForProvider(p);
+    const defaultA = newVoices[0]?.id || "alloy";
+    const defaultB = newVoices[1]?.id || "echo";
+    const defaultN = newVoices[newVoices.length - 1]?.id || "shimmer";
+    setVoiceA(defaultA); setVoiceB(defaultB); setVoiceN(defaultN);
+    upd.mutate({ id: project.id, audioProvider: p, speakerAVoice: defaultA, speakerBVoice: defaultB, speakerNarratorVoice: defaultN });
+  };
 
   const genAll = async () => {
     setBusy(true); setProgress(0);
@@ -385,34 +476,68 @@ function Step3Audio({ project, onNext }: { project: any; onNext: () => void }) {
     (project.dialogues || []).forEach((d: any, i: number) => {
       const dur = Math.max(2, d.text.split(" ").length / 2.5);
       const fmtT = (s: number) => { const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=Math.floor(s%60),ms=Math.floor((s%1)*1000); return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")},${String(ms).padStart(3,"0")}`; };
-      srt += `${i+1}\n${fmtT(t)} --> ${fmtT(t+dur)}\n[${d.speaker==="A"?project.speakerAName:project.speakerBName}] ${d.text}\n\n`;
+      const name = d.speaker==="A" ? project.speakerAName : d.speaker==="B" ? project.speakerBName : project.speakerNarratorName;
+      srt += `${i+1}\n${fmtT(t)} --> ${fmtT(t+dur)}\n[${name}] ${d.text}\n\n`;
       t += dur + 0.5;
     });
     const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([srt],{type:"text/plain"}));
     a.download = `${project.topic.replace(/\s+/g,"_")}.srt`; a.click(); setCaptionsDone(true);
   };
 
+  const speakerConfigs = [
+    { speaker: "A", name: project.speakerAName, voice: voiceA, color: "indigo", set: (v: string) => { setVoiceA(v); saveVoice("speakerAVoice", v); } },
+    { speaker: "B", name: project.speakerBName, voice: voiceB, color: "cyan", set: (v: string) => { setVoiceB(v); saveVoice("speakerBVoice", v); } },
+    { speaker: "N", name: project.speakerNarratorName || "Narrator", voice: voiceN, color: "amber", set: (v: string) => { setVoiceN(v); saveVoice("speakerNarratorVoice", v); } },
+  ];
+
+  const colorMap: Record<string, { border: string; bg: string; text: string; activeBg: string; activeBorder: string; activeText: string }> = {
+    indigo: { border: "border-t-indigo-500", bg: "bg-indigo-500/20", text: "text-indigo-400", activeBg: "bg-indigo-500/20", activeBorder: "border-indigo-500", activeText: "text-indigo-300" },
+    cyan: { border: "border-t-cyan-500", bg: "bg-cyan-500/20", text: "text-cyan-400", activeBg: "bg-cyan-500/20", activeBorder: "border-cyan-500", activeText: "text-cyan-300" },
+    amber: { border: "border-t-amber-500", bg: "bg-amber-500/20", text: "text-amber-400", activeBg: "bg-amber-500/20", activeBorder: "border-amber-500", activeText: "text-amber-300" },
+  };
+
   return (
     <div className="max-w-4xl mx-auto space-y-5">
       <div className="flex justify-between items-center">
-        <div><h2 className="text-2xl font-display font-bold text-white">Voice Synthesis</h2><p className="text-muted-foreground text-sm">Select voices and generate audio.</p></div>
+        <div><h2 className="text-2xl font-display font-bold text-white">Voice Synthesis</h2><p className="text-muted-foreground text-sm">Select provider, voices and generate audio.</p></div>
         <button onClick={onNext} disabled={!allDone} className="px-5 py-2 bg-white text-black font-bold rounded-xl text-sm hover:bg-gray-200 disabled:opacity-50 flex items-center gap-1.5">Next <ArrowRight className="w-4 h-4" /></button>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {[{speaker:"A",name:project.speakerAName,voice:voiceA,color:"indigo",set:(v:string)=>{setVoiceA(v);saveVoices(v,voiceB);}},{speaker:"B",name:project.speakerBName,voice:voiceB,color:"cyan",set:(v:string)=>{setVoiceB(v);saveVoices(voiceA,v);}}].map(sp => (
-          <div key={sp.speaker} className={`glass-panel p-4 rounded-2xl border-t-4 ${sp.color==="indigo"?"border-t-indigo-500":"border-t-cyan-500"}`}>
-            <div className="flex items-center gap-2 mb-3">
-              <div className={`w-6 h-6 rounded-full ${sp.color==="indigo"?"bg-indigo-500/20 text-indigo-400":"bg-cyan-500/20 text-cyan-400"} flex items-center justify-center font-bold text-xs`}>{sp.speaker}</div>
-              <span className="font-bold text-white text-sm">{sp.name}</span>
-            </div>
-            <div className="grid grid-cols-3 gap-1.5">{voices.map(v => (<button key={v.id} onClick={()=>sp.set(v.id)} className={`py-2 rounded-lg border text-xs font-medium ${sp.voice===v.id?(sp.color==="indigo"?"bg-indigo-500/20 border-indigo-500 text-indigo-300":"bg-cyan-500/20 border-cyan-500 text-cyan-300"):"bg-black/20 border-white/10 text-gray-400"}`}>{v.name}</button>))}</div>
-          </div>
+
+      {/* Audio Provider Tabs */}
+      <div className="glass-panel rounded-2xl p-1.5 flex gap-1">
+        {AUDIO_PROVIDERS.map(p => (
+          <button key={p.id} onClick={() => switchProvider(p.id)} className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-all flex flex-col items-center gap-0.5 ${provider === p.id ? "bg-primary text-white shadow-lg" : "text-gray-400 hover:text-white hover:bg-white/5"}`}>
+            <span>{p.name}</span>
+            <span className="text-[10px] opacity-60 font-normal">{p.desc}</span>
+          </button>
         ))}
       </div>
+
+      {/* Voice Selection - 3 speakers */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {speakerConfigs.map(sp => {
+          const cm = colorMap[sp.color];
+          return (
+            <div key={sp.speaker} className={`glass-panel p-4 rounded-2xl border-t-4 ${cm.border}`}>
+              <div className="flex items-center gap-2 mb-3">
+                <div className={`w-6 h-6 rounded-full ${cm.bg} ${cm.text} flex items-center justify-center font-bold text-xs`}>{sp.speaker}</div>
+                <span className="font-bold text-white text-sm">{sp.name}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {voices.map(v => (
+                  <button key={v.id} onClick={() => sp.set(v.id)} className={`py-2 rounded-lg border text-xs font-medium ${sp.voice === v.id ? `${cm.activeBg} ${cm.activeBorder} ${cm.activeText}` : "bg-black/20 border-white/10 text-gray-400"}`}>{v.name}</button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Generate buttons */}
       <div className="glass-panel p-5 rounded-2xl flex flex-col items-center">
         {busy ? (
           <div className="w-full max-w-sm text-center">
-            <p className="text-white font-bold mb-2 text-sm">Generating Audio...</p>
+            <p className="text-white font-bold mb-2 text-sm">Generating Audio via {AUDIO_PROVIDERS.find(p=>p.id===provider)?.name}...</p>
             <div className="h-2.5 w-full bg-black/40 rounded-full overflow-hidden border border-white/10"><div className="h-full bg-gradient-to-r from-indigo-500 to-cyan-500 transition-all" style={{width:`${progress}%`}} /></div>
             <p className="text-gray-400 text-xs mt-1">{progress}%</p>
           </div>
@@ -427,14 +552,20 @@ function Step3Audio({ project, onNext }: { project: any; onNext: () => void }) {
           </div>
         )}
       </div>
+
+      {/* Dialogue list with all 3 speakers */}
       <div className="space-y-1.5 max-h-60 overflow-y-auto">
-        {(project.dialogues||[]).map((d: any) => (
-          <div key={d.id} className={`flex items-center gap-2 p-2.5 rounded-xl border glass-panel text-xs ${d.speaker==="A"?"border-indigo-500/20 bg-indigo-500/5":"border-cyan-500/20 bg-cyan-500/5"}`}>
-            <div className={`w-5 h-5 rounded-full flex items-center justify-center font-bold shrink-0 ${d.speaker==="A"?"bg-indigo-500/20 text-indigo-400":"bg-cyan-500/20 text-cyan-400"}`}>{d.speaker}</div>
-            <p className="text-gray-300 flex-1 truncate">{d.text}</p>
-            {d.audioUrl ? <span className="text-green-400 flex items-center gap-1 shrink-0"><Check className="w-3 h-3" /> Done</span> : <span className="text-gray-600 shrink-0">Pending</span>}
-          </div>
-        ))}
+        {(project.dialogues||[]).map((d: any) => {
+          const borderCol = d.speaker==="A" ? "border-indigo-500/20 bg-indigo-500/5" : d.speaker==="B" ? "border-cyan-500/20 bg-cyan-500/5" : "border-amber-500/20 bg-amber-500/5";
+          const badgeCol = d.speaker==="A" ? "bg-indigo-500/20 text-indigo-400" : d.speaker==="B" ? "bg-cyan-500/20 text-cyan-400" : "bg-amber-500/20 text-amber-400";
+          return (
+            <div key={d.id} className={`flex items-center gap-2 p-2.5 rounded-xl border glass-panel text-xs ${borderCol}`}>
+              <div className={`w-5 h-5 rounded-full flex items-center justify-center font-bold shrink-0 ${badgeCol}`}>{d.speaker}</div>
+              <p className="text-gray-300 flex-1 truncate">{d.text}</p>
+              {d.audioUrl ? <span className="text-green-400 flex items-center gap-1 shrink-0"><Check className="w-3 h-3" /> Done</span> : <span className="text-gray-600 shrink-0">Pending</span>}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -443,7 +574,7 @@ function Step3Audio({ project, onNext }: { project: any; onNext: () => void }) {
 // ─── STEP 4: VIDEO PREVIEW ─────────────────────────────────────────────────────
 type Phase = "idle" | "speaking" | "scoring";
 type TextSize = "small" | "medium" | "large";
-interface OverlayCfg { roleA: string; roleB: string; textSize: TextSize; showScores: boolean; showTimer: boolean; showTopic: boolean; showWaveform: boolean; showTranscript: boolean; }
+interface OverlayCfg { roleA: string; roleB: string; textSize: TextSize; showScores: boolean; showTimer: boolean; showTopic: boolean; showWaveform: boolean; showTranscript: boolean; bgOpacity: number; }
 
 function Step4Preview({ project }: { project: any }) {
   const dialogues: any[] = project.dialogues || [];
@@ -458,7 +589,7 @@ function Step4Preview({ project }: { project: any }) {
   const [bg, setBg] = useState(project.backgroundImage || DEMO_BG);
   const [showSettings, setShowSettings] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
-  const [cfg, setCfg] = useState<OverlayCfg>({ roleA: "SUPPORTER", roleB: "OPPONENT", textSize: "medium", showScores: true, showTimer: true, showTopic: true, showWaveform: true, showTranscript: true });
+  const [cfg, setCfg] = useState<OverlayCfg>({ roleA: "SUPPORTER", roleB: "OPPONENT", textSize: "medium", showScores: true, showTimer: true, showTopic: true, showWaveform: true, showTranscript: true, bgOpacity: 100 });
 
   // Pre-compute scores for all dialogues
   const scoreData = useMemo(() => dialogues.map(d => {
@@ -473,12 +604,24 @@ function Step4Preview({ project }: { project: any }) {
 
   const current = dialogues[idx] || { text: "", speaker: "A" };
   const isA = current.speaker === "A";
+  const isNarrator = current.speaker === "N";
 
   // ── Phase-based engine ──
   useEffect(() => {
     if (phase === "idle") return;
     if (phase === "speaking") {
-      if (countdown <= 0) { playScoreReveal(); setPhase("scoring"); return; }
+      if (countdown <= 0) {
+        // Narrator lines skip scoring
+        if (isNarrator) {
+          const next = idx + 1;
+          if (next >= dialogues.length) { setPhase("idle"); return; }
+          setIdx(next);
+          setCountdown(dialogueDuration(dialogues[next].text));
+          playTransition();
+          return;
+        }
+        playScoreReveal(); setPhase("scoring"); return;
+      }
       if (countdown <= 3) playCountdownBeep();
       const t = setTimeout(() => setCountdown(c => c - 1), 1000);
       return () => clearTimeout(t);
@@ -526,7 +669,7 @@ function Step4Preview({ project }: { project: any }) {
   const set = <K extends keyof OverlayCfg>(k: K, v: OverlayCfg[K]) => setCfg(c=>({...c,[k]:v}));
   const styleNames = ["","Panel","Bar","News","Arena"];
 
-  const canvasProps = { project, current, isA, cfg, countdown, isSpeaking: phase==="speaking", totA, totB };
+  const canvasProps = { project, current, isA, isNarrator, cfg, countdown, isSpeaking: phase==="speaking", totA, totB };
 
   return (
     <div className="max-w-7xl mx-auto flex flex-col gap-3" style={{ height: "calc(100vh - 110px)" }}>
@@ -582,11 +725,18 @@ function Step4Preview({ project }: { project: any }) {
                 </div>
               </div>
               <div className="space-y-1.5">
+                <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider">BG Opacity</p>
+                <div className="flex items-center gap-2">
+                  <input type="range" min={0} max={100} value={cfg.bgOpacity} onChange={e => set("bgOpacity", parseInt(e.target.value))} className="flex-1 accent-primary h-1.5" />
+                  <span className="text-xs text-gray-400 tabular-nums w-8 text-right">{cfg.bgOpacity}%</span>
+                </div>
+              </div>
+              <div className="space-y-1.5">
                 <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider">Visibility</p>
                 {([["showScores","Scores"],["showTopic","Topic"],["showTimer","Timer"],["showWaveform","Waveform"],["showTranscript","Transcript"]] as [keyof OverlayCfg, string][]).map(([k,label])=>(
                   <label key={k} className="flex items-center justify-between cursor-pointer py-0.5">
                     <span className="text-xs text-gray-300">{label}</span>
-                    <button onClick={()=>set(k,!cfg[k])} className={`w-9 h-[18px] rounded-full relative transition-all ${cfg[k]?"bg-primary":"bg-white/20"}`}>
+                    <button onClick={()=>set(k,!cfg[k] as any)} className={`w-9 h-[18px] rounded-full relative transition-all ${cfg[k]?"bg-primary":"bg-white/20"}`}>
                       <div className={`w-3.5 h-3.5 bg-white rounded-full absolute top-[2px] transition-all ${cfg[k]?"left-[18px]":"left-[2px]"}`} />
                     </button>
                   </label>
@@ -599,7 +749,7 @@ function Step4Preview({ project }: { project: any }) {
         {/* Canvas */}
         <div className="flex-1 relative rounded-2xl overflow-hidden border border-white/10 shadow-2xl bg-black min-h-0">
           {/* Background - clearly visible */}
-          <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url(${bg})` }} />
+          <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url(${bg})`, opacity: cfg.bgOpacity / 100 }} />
           {/* Light vignette only */}
           <div className="absolute inset-0" style={{ background: "linear-gradient(to bottom, rgba(0,0,0,0.25) 0%, transparent 30%, transparent 60%, rgba(0,0,0,0.4) 100%)" }} />
 
@@ -609,9 +759,9 @@ function Step4Preview({ project }: { project: any }) {
           {style===3 && <Style3 {...canvasProps} />}
           {style===4 && <Style4 {...canvasProps} />}
 
-          {/* Score Card Overlay */}
+          {/* Score Card Overlay (not for narrator) */}
           <AnimatePresence>
-            {phase === "scoring" && scoreData[idx] && (
+            {phase === "scoring" && scoreData[idx] && !isNarrator && (
               <ScoreCardPage
                 scores={scoreData[idx].modelScores}
                 speakerName={isA ? project.speakerAName : project.speakerBName}
@@ -638,12 +788,12 @@ function Step4Preview({ project }: { project: any }) {
 }
 
 // ─── CANVAS PROPS TYPE ─────────────────────────────────────────────────────────
-interface CP { project: any; current: any; isA: boolean; cfg: OverlayCfg; countdown: number; isSpeaking: boolean; totA: number; totB: number; }
+interface CP { project: any; current: any; isA: boolean; isNarrator: boolean; cfg: OverlayCfg; countdown: number; isSpeaking: boolean; totA: number; totB: number; }
 
 // ─── STYLE 1: Reference image layout ──────────────────────────────────────────
 // Top-left blue score | center topic | top-right timer+purple score
 // Below title: SUPPORTER / OPPONENT text | Center speech bubble
-function Style1({ project, current, isA, cfg, countdown, isSpeaking, totA, totB }: CP) {
+function Style1({ project, current, isA, isNarrator, cfg, countdown, isSpeaking, totA, totB }: CP) {
   // Only show a snippet of text (2 lines max)
   const snippet = current.text.length > 80 ? current.text.slice(0, 78) + "…" : current.text;
   return (
@@ -697,11 +847,12 @@ function Style1({ project, current, isA, cfg, countdown, isSpeaking, totA, totB 
         <motion.div drag dragMomentum={false} className="absolute z-20 cursor-move" style={{ bottom: 55, left: "50%", transform: "translateX(-50%)", width: "min(85%, 560px)" }}>
           <AnimatePresence mode="wait">
             <motion.div key={current.text} initial={{opacity:0,y:12,scale:0.97}} animate={{opacity:1,y:0,scale:1}} exit={{opacity:0,y:-8,scale:0.97}}
-              className="relative bg-gray-900/88 backdrop-blur-md rounded-2xl shadow-2xl border border-white/10"
+              className={`relative backdrop-blur-md rounded-2xl shadow-2xl border ${isNarrator ? "bg-amber-950/85 border-amber-500/30" : "bg-gray-900/88 border-white/10"}`}
               style={{ padding: cfg.textSize==="small"?"10px 16px":cfg.textSize==="large"?"18px 28px":"14px 22px" }}>
               {/* Bubble tail */}
-              <div className={`absolute -bottom-2.5 ${isA ? "left-10" : "right-10"} w-5 h-5 rotate-45 bg-gray-900/88 border-b border-r border-white/10`} />
-              <p className={`text-white font-bold text-center leading-snug ${TEXT_SIZES[cfg.textSize]}`}>{snippet}</p>
+              <div className={`absolute -bottom-2.5 ${isNarrator ? "left-1/2 -translate-x-1/2" : isA ? "left-10" : "right-10"} w-5 h-5 rotate-45 ${isNarrator ? "bg-amber-950/85 border-b border-r border-amber-500/30" : "bg-gray-900/88 border-b border-r border-white/10"}`} />
+              {isNarrator && <div className="flex items-center gap-1.5 mb-1 justify-center"><div className="w-1.5 h-1.5 rounded-full bg-amber-400" /><span className="text-[9px] font-bold tracking-wider uppercase text-amber-400">{project.speakerNarratorName}</span></div>}
+              <p className={`text-white font-bold text-center leading-snug ${isNarrator ? "italic" : ""} ${TEXT_SIZES[cfg.textSize]}`}>{snippet}</p>
             </motion.div>
           </AnimatePresence>
         </motion.div>
@@ -711,7 +862,7 @@ function Style1({ project, current, isA, cfg, countdown, isSpeaking, totA, totB 
 }
 
 // ─── STYLE 2: Bottom bar ───────────────────────────────────────────────────────
-function Style2({ project, current, isA, cfg, countdown, isSpeaking, totA, totB }: CP) {
+function Style2({ project, current, isA, isNarrator, cfg, countdown, isSpeaking, totA, totB }: CP) {
   const snippet = current.text.length > 100 ? current.text.slice(0, 98) + "…" : current.text;
   return (
     <>
@@ -749,9 +900,9 @@ function Style2({ project, current, isA, cfg, countdown, isSpeaking, totA, totB 
         <motion.div drag dragMomentum={false} className="absolute bottom-[72px] left-8 right-8 z-20 cursor-move">
           <AnimatePresence mode="wait">
             <motion.div key={current.text} initial={{opacity:0,scale:0.97}} animate={{opacity:1,scale:1}} exit={{opacity:0,scale:0.97}}
-              className={`bg-black/75 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl ${BOX_PAD[cfg.textSize]}`}>
-              <div className="flex items-center gap-1.5 mb-1"><div className={`w-2 h-2 rounded-full ${isA?"bg-blue-400":"bg-rose-400"}`}/><span className={`text-[10px] font-bold tracking-wider ${isA?"text-blue-400":"text-rose-400"}`}>{isA?project.speakerAName:project.speakerBName}</span></div>
-              <p className={`text-white font-bold leading-snug ${TEXT_SIZES[cfg.textSize]}`}>{snippet}</p>
+              className={`backdrop-blur-xl border rounded-2xl shadow-2xl ${BOX_PAD[cfg.textSize]} ${isNarrator ? "bg-amber-950/75 border-amber-500/20" : "bg-black/75 border-white/10"}`}>
+              <div className="flex items-center gap-1.5 mb-1"><div className={`w-2 h-2 rounded-full ${isNarrator?"bg-amber-400":isA?"bg-blue-400":"bg-rose-400"}`}/><span className={`text-[10px] font-bold tracking-wider ${isNarrator?"text-amber-400":isA?"text-blue-400":"text-rose-400"}`}>{isNarrator?project.speakerNarratorName:isA?project.speakerAName:project.speakerBName}</span></div>
+              <p className={`text-white font-bold leading-snug ${isNarrator?"italic":""} ${TEXT_SIZES[cfg.textSize]}`}>{snippet}</p>
             </motion.div>
           </AnimatePresence>
         </motion.div>
@@ -761,8 +912,10 @@ function Style2({ project, current, isA, cfg, countdown, isSpeaking, totA, totB 
 }
 
 // ─── STYLE 3: News Broadcast ───────────────────────────────────────────────────
-function Style3({ project, current, isA, cfg, countdown, isSpeaking, totA, totB }: CP) {
+function Style3({ project, current, isA, isNarrator, cfg, countdown, isSpeaking, totA, totB }: CP) {
   const snippet = current.text.length > 90 ? current.text.slice(0,88)+"…" : current.text;
+  const activeName = isNarrator ? project.speakerNarratorName : isA ? project.speakerAName : project.speakerBName;
+  const activeRole = isNarrator ? "NARRATOR" : isA ? cfg.roleA : cfg.roleB;
   return (
     <>
       <motion.div drag dragMomentum={false} className="absolute top-4 left-4 z-20 cursor-move flex items-center gap-2">
@@ -774,9 +927,9 @@ function Style3({ project, current, isA, cfg, countdown, isSpeaking, totA, totB 
       <motion.div drag dragMomentum={false} className="absolute bottom-12 left-0 right-0 z-20 cursor-move">
         <div className="flex flex-col">
           <div className="flex items-stretch">
-            <div className={`${isA?"bg-blue-600":"bg-rose-600"} px-4 py-2`}>
-              <p className="text-white font-black text-sm">{isA?project.speakerAName:project.speakerBName}</p>
-              <p className="text-white/70 text-[10px] font-bold tracking-wider">{isA?cfg.roleA:cfg.roleB}</p>
+            <div className={`${isNarrator?"bg-amber-600":isA?"bg-blue-600":"bg-rose-600"} px-4 py-2`}>
+              <p className="text-white font-black text-sm">{activeName}</p>
+              <p className="text-white/70 text-[10px] font-bold tracking-wider">{activeRole}</p>
             </div>
             {cfg.showTranscript&&current.text&&<div className="flex-1 bg-gray-900/95 backdrop-blur px-4 py-2 flex items-center"><p className={`text-white font-semibold leading-snug ${TEXT_SIZES[cfg.textSize]}`}>{snippet}</p></div>}
           </div>
@@ -793,7 +946,7 @@ function Style3({ project, current, isA, cfg, countdown, isSpeaking, totA, totB 
 }
 
 // ─── STYLE 4: Arena / VS ───────────────────────────────────────────────────────
-function Style4({ project, current, isA, cfg, countdown, isSpeaking, totA, totB }: CP) {
+function Style4({ project, current, isA, isNarrator, cfg, countdown, isSpeaking, totA, totB }: CP) {
   const snippet = current.text.length > 100 ? current.text.slice(0,98)+"…" : current.text;
   return (
     <>
@@ -833,9 +986,9 @@ function Style4({ project, current, isA, cfg, countdown, isSpeaking, totA, totB 
         <motion.div drag dragMomentum={false} className="absolute bottom-12 left-4 right-4 z-20 cursor-move">
           <AnimatePresence mode="wait">
             <motion.div key={current.text} initial={{opacity:0,y:15}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-15}}
-              className={`${BOX_PAD[cfg.textSize]} rounded-xl border shadow-2xl backdrop-blur-lg ${isA?"bg-blue-950/80 border-blue-500/30":"bg-rose-950/80 border-rose-500/30"}`}>
-              <div className="flex items-center gap-1.5 mb-1"><div className={`w-1.5 h-1.5 rounded-full ${isA?"bg-blue-400":"bg-rose-400"}`}/><span className={`text-[9px] font-bold tracking-wider uppercase ${isA?"text-blue-400":"text-rose-400"}`}>{isA?project.speakerAName:project.speakerBName}</span></div>
-              <p className={`text-white font-bold leading-snug ${TEXT_SIZES[cfg.textSize]}`}>{snippet}</p>
+              className={`${BOX_PAD[cfg.textSize]} rounded-xl border shadow-2xl backdrop-blur-lg ${isNarrator?"bg-amber-950/80 border-amber-500/30":isA?"bg-blue-950/80 border-blue-500/30":"bg-rose-950/80 border-rose-500/30"}`}>
+              <div className="flex items-center gap-1.5 mb-1"><div className={`w-1.5 h-1.5 rounded-full ${isNarrator?"bg-amber-400":isA?"bg-blue-400":"bg-rose-400"}`}/><span className={`text-[9px] font-bold tracking-wider uppercase ${isNarrator?"text-amber-400":isA?"text-blue-400":"text-rose-400"}`}>{isNarrator?project.speakerNarratorName:isA?project.speakerAName:project.speakerBName}</span></div>
+              <p className={`text-white font-bold leading-snug ${isNarrator?"italic":""} ${TEXT_SIZES[cfg.textSize]}`}>{snippet}</p>
             </motion.div>
           </AnimatePresence>
         </motion.div>
