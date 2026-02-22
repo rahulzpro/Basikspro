@@ -152,3 +152,23 @@ export function useGenerateAudio() {
     },
   });
 }
+
+export function useGenerateTranscript() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ dialogueId, projectId }: { dialogueId: number, projectId: number }) => {
+      const url = buildUrl(api.ai.generateTranscript.path, { id: dialogueId });
+      const res = await fetch(url, {
+        method: api.ai.generateTranscript.method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to generate transcript");
+      return api.ai.generateTranscript.responses[200].parse(await res.json());
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: [api.projects.get.path, variables.projectId] });
+    },
+  });
+}

@@ -94,6 +94,15 @@ export const api = {
         400: errorSchemas.validation,
       },
     },
+    generateTranscript: {
+      method: 'POST' as const,
+      path: '/api/dialogues/:id/generate-transcript' as const,
+      input: z.object({}),
+      responses: {
+        200: z.custom<typeof dialogues.$inferSelect>(),
+        400: errorSchemas.validation,
+      },
+    },
   }
 };
 

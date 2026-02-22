@@ -19,6 +19,62 @@ const openai = new OpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
 
+// ─── Audio generation helpers ────────────────────────────────────────────────
+
+async function generateOpenAIAudio(text: string, voice: string): Promise<string> {
+  const audioResponse = await openai.audio.speech.create({
+    model: "tts-1",
+    voice: voice as any,
+    input: text,
+    response_format: "mp3",
+  });
+  const buffer = Buffer.from(await audioResponse.arrayBuffer());
+  const base64 = buffer.toString("base64");
+  return `data:audio/mp3;base64,${base64}`;
+}
+
+async function generateElevenLabsAudio(text: string, voiceId: string): Promise<string> {
+  const apiKey = process.env.ELEVENLABS_API_KEY || process.env.AI_INTEGRATIONS_ELEVENLABS_API_KEY || "";
+  const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+    method: "POST",
+    headers: {
+      "xi-api-key": apiKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      text,
+      model_id: "eleven_turbo_v2_5",
+      voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+    }),
+  });
+  if (!response.ok) throw new Error(`ElevenLabs error: ${response.status} ${await response.text()}`);
+  const buffer = Buffer.from(await response.arrayBuffer());
+  const base64 = buffer.toString("base64");
+  return `data:audio/mpeg;base64,${base64}`;
+}
+
+async function generateGeminiTTSAudio(text: string, voiceName: string): Promise<string> {
+  const response = await ai.models.generateContent({
+    model: "gemini-2.5-flash-preview-tts",
+    contents: text,
+    config: {
+      responseModalities: ["AUDIO"] as any,
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: { voiceName },
+        },
+      } as any,
+    },
+  });
+  const candidate = response.candidates?.[0];
+  const audioPart = candidate?.content?.parts?.find((p: any) => p.inlineData);
+  if (!audioPart?.inlineData?.data) throw new Error("Gemini TTS returned no audio data");
+  const mimeType = audioPart.inlineData.mimeType || "audio/mp3";
+  return `data:${mimeType};base64,${audioPart.inlineData.data}`;
+}
+
+// ─── Routes ──────────────────────────────────────────────────────────────────
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -84,32 +140,45 @@ export async function registerRoutes(
     }
   });
 
+  // Generate script with narrator support
   app.post(api.ai.generateScript.path, async (req, res) => {
     try {
       const projectId = Number(req.params.id);
       const project = await storage.getProject(projectId);
       if (!project) return res.status(404).json({ message: "Project not found" });
 
-      const prompt = `Generate a ${project.duration} debate script on the topic: "${project.topic}". 
-      The debate is between ${project.speakerAName} (Speaker A) and ${project.speakerBName} (Speaker B).
-      Output the script in a valid JSON array format where each element is an object with 'speaker' ('A' or 'B') and 'text'.
-      Do not include any markdown formatting like \`\`\`json, just output the raw JSON array.
-      Keep it engaging and argumentative.`;
+      const narratorName = project.speakerNarratorName || "Narrator";
+      const prompt = `Generate a ${project.duration} debate script on the topic: "${project.topic}".
+The debate has three participants:
+- ${project.speakerAName} (Speaker A) - argues FOR the topic
+- ${project.speakerBName} (Speaker B) - argues AGAINST the topic
+- ${narratorName} (Narrator N) - introduces each round with a brief context sentence
+
+Structure each debate round as:
+1. Narrator N: A short 1-2 sentence intro for the upcoming argument point (e.g. "In this round, both speakers address the question of...")
+2. Speaker A: Their argument (3-5 sentences)
+3. Speaker B: Their counter-argument (3-5 sentences)
+
+Generate 3-5 such rounds depending on the duration (short=3, medium=4, long=5).
+
+Output ONLY a valid JSON array where each element has 'speaker' ('A', 'B', or 'N') and 'text'.
+Example: [{"speaker":"N","text":"..."},{"speaker":"A","text":"..."},{"speaker":"B","text":"..."}]
+Do NOT include any markdown formatting. Just the raw JSON array.`;
 
       const response = await ai.models.generateContent({
         model: project.model,
         contents: prompt,
         config: {
           responseMimeType: "application/json",
-        }
+        },
       });
 
       const jsonText = response.text || "[]";
-      let scriptParsed;
+      let scriptParsed: any[];
       try {
         scriptParsed = JSON.parse(jsonText);
-      } catch (e) {
-        const cleaned = jsonText.replace(/^```json\n/, '').replace(/\n```$/, '');
+      } catch {
+        const cleaned = jsonText.replace(/^```json\n?/, '').replace(/\n?```$/, '');
         scriptParsed = JSON.parse(cleaned);
       }
 
@@ -117,15 +186,14 @@ export async function registerRoutes(
       const toInsert = scriptParsed.map((d: any, index: number) => ({
         projectId,
         sequence: index,
-        speaker: d.speaker === 'A' ? 'A' : 'B',
-        text: d.text
+        speaker: ['A', 'B', 'N'].includes(d.speaker) ? d.speaker : 'A',
+        text: d.text,
       }));
 
       const newDialogues = await storage.insertDialogues(toInsert);
       res.json(newDialogues);
-
     } catch (err) {
-      console.error(err);
+      console.error("generateScript error:", err);
       res.status(500).json({ message: "Failed to generate script" });
     }
   });
@@ -134,31 +202,36 @@ export async function registerRoutes(
     try {
       const dialogueId = Number(req.params.id);
       const { instructions } = api.ai.rewriteDialogue.input.parse(req.body);
-      
+
       const dbDialogue = await storage.getDialogue(dialogueId);
       if (!dbDialogue) return res.status(404).json({ message: "Dialogue not found" });
 
       const project = await storage.getProject(dbDialogue.projectId);
-      
-      const prompt = `Rewrite the following dialogue for a debate. 
-      Original text: "${dbDialogue.text}"
-      Speaker: ${dbDialogue.speaker === 'A' ? project?.speakerAName : project?.speakerBName}
-      Instructions: ${instructions}
-      Just output the rewritten text and nothing else.`;
+      const speakerLabel =
+        dbDialogue.speaker === 'A' ? project?.speakerAName :
+        dbDialogue.speaker === 'B' ? project?.speakerBName :
+        project?.speakerNarratorName || 'Narrator';
+
+      const prompt = `Rewrite the following dialogue for a debate.
+Original text: "${dbDialogue.text}"
+Speaker: ${speakerLabel}
+Instructions: ${instructions}
+Just output the rewritten text and nothing else.`;
 
       const response = await ai.models.generateContent({
-        model: project?.model || "gemini-3.1-pro-preview",
+        model: project?.model || "gemini-2.0-flash",
         contents: prompt,
       });
 
       const updated = await storage.updateDialogue(dialogueId, { text: response.text || dbDialogue.text });
       res.json(updated);
     } catch (err) {
-      console.error(err);
+      console.error("rewriteDialogue error:", err);
       res.status(500).json({ message: "Failed to rewrite" });
     }
   });
 
+  // Generate audio with multi-provider support
   app.post(api.ai.generateAudio.path, async (req, res) => {
     try {
       const dialogueId = Number(req.params.id);
@@ -168,43 +241,82 @@ export async function registerRoutes(
       const project = await storage.getProject(dbDialogue.projectId);
       if (!project) return res.status(404).json({ message: "Project not found" });
 
-      const voice = dbDialogue.speaker === 'A' ? project.speakerAVoice : project.speakerBVoice;
-      
-      // Using Gemini 2.5 Flash for audio generation (Google TTS 2.5 equivalent in Replit AI)
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: `Convert this text to speech with a natural debate tone: "${dbDialogue.text}"`,
-        config: {
-          responseModalities: ["text", "audio"],
+      // Pick voice based on speaker
+      const voice =
+        dbDialogue.speaker === 'A' ? project.speakerAVoice :
+        dbDialogue.speaker === 'B' ? project.speakerBVoice :
+        project.speakerNarratorVoice || 'shimmer';
+
+      const provider = project.audioProvider || 'openai';
+      let dataUrl: string;
+
+      try {
+        if (provider === 'elevenlabs') {
+          dataUrl = await generateElevenLabsAudio(dbDialogue.text, voice);
+        } else if (provider === 'gemini') {
+          dataUrl = await generateGeminiTTSAudio(dbDialogue.text, voice);
+        } else {
+          // openai (default)
+          dataUrl = await generateOpenAIAudio(dbDialogue.text, voice);
         }
-      });
-
-      const candidate = response.candidates?.[0];
-      const audioPart = candidate?.content?.parts?.find((part: any) => part.inlineData);
-
-      if (!audioPart?.inlineData?.data) {
-        // Fallback to OpenAI TTS if Gemini audio fails or is not supported for this specific model variant
-        const audioResponse = await openai.audio.speech.create({
-          model: "tts-1",
-          voice: voice as any,
-          input: dbDialogue.text,
-          response_format: "mp3"
-        });
-        const buffer = Buffer.from(await audioResponse.arrayBuffer());
-        const base64 = buffer.toString('base64');
-        const dataUrl = `data:audio/mp3;base64,${base64}`;
-        const updated = await storage.updateDialogue(dialogueId, { audioUrl: dataUrl });
-        return res.json(updated);
+      } catch (providerErr) {
+        console.warn(`${provider} audio failed, falling back to OpenAI:`, providerErr);
+        // Fallback to OpenAI
+        const fallbackVoice = dbDialogue.speaker === 'A' ? 'alloy' : dbDialogue.speaker === 'B' ? 'echo' : 'shimmer';
+        dataUrl = await generateOpenAIAudio(dbDialogue.text, fallbackVoice);
       }
-
-      const mimeType = audioPart.inlineData.mimeType || "audio/mp3";
-      const dataUrl = `data:${mimeType};base64,${audioPart.inlineData.data}`;
 
       const updated = await storage.updateDialogue(dialogueId, { audioUrl: dataUrl });
       res.json(updated);
     } catch (err) {
-      console.error(err);
+      console.error("generateAudio error:", err);
       res.status(500).json({ message: "Failed to generate audio" });
+    }
+  });
+
+  // Generate transcript from audio using Gemini Flash multimodal
+  app.post(api.ai.generateTranscript.path, async (req, res) => {
+    try {
+      const dialogueId = Number(req.params.id);
+      const dbDialogue = await storage.getDialogue(dialogueId);
+      if (!dbDialogue) return res.status(404).json({ message: "Dialogue not found" });
+
+      if (!dbDialogue.audioUrl) {
+        return res.status(400).json({ message: "No audio to transcribe. Generate audio first." });
+      }
+
+      // Extract base64 data and mime type from data URL
+      const match = dbDialogue.audioUrl.match(/^data:([^;]+);base64,(.+)$/);
+      if (!match) {
+        return res.status(400).json({ message: "Invalid audio data format" });
+      }
+      const [, mimeType, base64Data] = match;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-2.0-flash",
+        contents: [
+          {
+            parts: [
+              {
+                inlineData: {
+                  mimeType,
+                  data: base64Data,
+                },
+              } as any,
+              {
+                text: "Transcribe this audio exactly word for word. Output only the transcription text, nothing else.",
+              },
+            ],
+          },
+        ],
+      });
+
+      const transcript = response.text?.trim() || dbDialogue.text;
+      const updated = await storage.updateDialogue(dialogueId, { transcript });
+      res.json(updated);
+    } catch (err) {
+      console.error("generateTranscript error:", err);
+      res.status(500).json({ message: "Failed to generate transcript" });
     }
   });
 
