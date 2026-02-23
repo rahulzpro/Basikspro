@@ -143,6 +143,12 @@ function ScoreCardPage({ scores, speakerName, avg, isA, totalA, totalB, nameA, n
                   initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.12 + 0.35 }}>
                   {s.score.toFixed(1)}
                 </motion.span>
+                {/* Animated bar chart */}
+                <div className="w-full mt-1.5 bg-gray-100 rounded-full overflow-hidden" style={{ height: 3 }}>
+                  <motion.div className="h-full rounded-full" style={{ backgroundColor: s.color }}
+                    initial={{ width: "0%" }} animate={{ width: `${(s.score / 10) * 100}%` }}
+                    transition={{ delay: i * 0.12 + 0.5, duration: 0.75, ease: "easeOut" }} />
+                </div>
               </motion.div>
             ))}
           </div>
@@ -681,7 +687,7 @@ function Step3Audio({ project, onNext }: { project: any; onNext: () => void }) {
 // ─── STEP 4: VIDEO PREVIEW ─────────────────────────────────────────────────────
 type Phase = "idle" | "speaking" | "scoring";
 type TextSize = "small" | "medium" | "large";
-interface OverlayCfg { roleA: string; roleB: string; textSize: TextSize; showScores: boolean; showTimer: boolean; showTopic: boolean; showWaveform: boolean; showTranscript: boolean; bgOpacity: number; subBottom: number; subWidth: number; subBgOpacity: number; }
+interface OverlayCfg { roleA: string; roleB: string; textSize: TextSize; showScores: boolean; showTimer: boolean; showTopic: boolean; showWaveform: boolean; showTranscript: boolean; bgOpacity: number; subBottom: number; subWidth: number; subBgOpacity: number; speakerAImage: string; speakerBImage: string; }
 
 function Step4Preview({ project }: { project: any }) {
   const dialogues: any[] = project.dialogues || [];
@@ -692,13 +698,16 @@ function Step4Preview({ project }: { project: any }) {
   const [idx, setIdx] = useState(0);
   const [phase, setPhase] = useState<Phase>("idle");
   const [countdown, setCountdown] = useState(0);
-  const [style, setStyle] = useState<1|2|3|4>(1);
+  const [style, setStyle] = useState<1|2|3|4|5|6>(1);
   const [bg, setBg] = useState(project.backgroundImage || DEMO_BG);
   const [showSettings, setShowSettings] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
-  const [cfg, setCfg] = useState<OverlayCfg>({ roleA: "SUPPORTER", roleB: "OPPONENT", textSize: "medium", showScores: true, showTimer: true, showTopic: true, showWaveform: true, showTranscript: true, bgOpacity: 100, subBottom: 12, subWidth: 80, subBgOpacity: 80 });
+  const [cfg, setCfg] = useState<OverlayCfg>({ roleA: "SUPPORTER", roleB: "OPPONENT", textSize: "medium", showScores: true, showTimer: true, showTopic: true, showWaveform: true, showTranscript: true, bgOpacity: 100, subBottom: 12, subWidth: 80, subBgOpacity: 80, speakerAImage: "", speakerBImage: "" });
   const [wordIdx, setWordIdx] = useState(-1);
   const wordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const spkAImgRef = useRef<HTMLInputElement>(null);
+  const spkBImgRef = useRef<HTMLInputElement>(null);
 
   // Pre-compute scores for all dialogues
   const scoreData = useMemo(() => dialogues.map(d => {
@@ -720,6 +729,8 @@ function Step4Preview({ project }: { project: any }) {
     if (phase === "idle") return;
     if (phase === "speaking") {
       if (countdown <= 0) {
+        // If audio URL exists, audio's onended handles advancement
+        if (dialogues[idx]?.audioUrl) return;
         // Narrator lines skip scoring
         if (isNarrator) {
           const next = idx + 1;
@@ -768,8 +779,32 @@ function Step4Preview({ project }: { project: any }) {
     return () => { if (wordTimerRef.current) clearInterval(wordTimerRef.current); };
   }, [phase, idx]);
 
+  // ── Preview audio playback: play actual generated audio per dialogue ──
+  useEffect(() => {
+    if (previewAudioRef.current) { previewAudioRef.current.pause(); previewAudioRef.current = null; }
+    if (phase !== "speaking") return;
+    const dl = dialogues[idx];
+    if (!dl?.audioUrl) return;
+    const audio = new Audio(dl.audioUrl);
+    previewAudioRef.current = audio;
+    const isN = dl.speaker === "N";
+    audio.onended = () => {
+      const next = idx + 1;
+      if (isN) {
+        if (next >= dialogues.length) { setPhase("idle"); return; }
+        setIdx(next); setCountdown(dialogueDuration(dialogues[next].text)); playTransition();
+      } else { playScoreReveal(); setPhase("scoring"); }
+    };
+    audio.play().catch(() => { /* blocked or missing – timer fallback handles it */ });
+    return () => { audio.pause(); };
+  }, [phase, idx]);
+
   const handlePlay = () => {
-    if (phase !== "idle") { setPhase("idle"); return; }
+    if (phase !== "idle") {
+      previewAudioRef.current?.pause();
+      previewAudioRef.current = null;
+      setPhase("idle"); return;
+    }
     if (!dialogues[idx]) return;
     setCountdown(dialogueDuration(dialogues[idx].text));
     setPhase("speaking");
@@ -795,8 +830,13 @@ function Step4Preview({ project }: { project: any }) {
     } catch { alert("Screen recording cancelled."); }
   };
 
+  const handleSpeakerImg = (speaker: "A" | "B") => (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    const r = new FileReader(); r.onload = ev => set(speaker === "A" ? "speakerAImage" : "speakerBImage", ev.target?.result as string); r.readAsDataURL(file);
+  };
+
   const set = <K extends keyof OverlayCfg>(k: K, v: OverlayCfg[K]) => setCfg(c=>({...c,[k]:v}));
-  const styleNames = ["","Panel","Bar","News","Arena"];
+  const styleNames = ["","Panel","Bar","News","Arena","Split","Podcast"];
 
   const canvasProps = { project, current, isA, isNarrator, cfg, countdown, isSpeaking: phase==="speaking", totA, totB, wordIdx };
 
@@ -811,18 +851,20 @@ function Step4Preview({ project }: { project: any }) {
         <div className="flex items-center gap-1.5 flex-wrap">
           {/* Style tabs */}
           <div className="flex bg-black/40 rounded-xl border border-white/10 p-0.5 gap-0.5">
-            {([1,2,3,4] as const).map(s => (
+            {([1,2,3,4,5,6] as const).map(s => (
               <button key={s} onClick={()=>setStyle(s)} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${style===s?"bg-primary text-white":"text-gray-400 hover:text-white"}`}>{styleNames[s]}</button>
             ))}
           </div>
           <button onClick={()=>setShowSettings(!showSettings)} className="px-3 py-2 rounded-xl border border-white/20 text-gray-300 hover:bg-white/5 text-xs flex items-center gap-1.5"><Settings className="w-3.5 h-3.5" /> Overlay</button>
           <button onClick={()=>fileRef.current?.click()} className="px-3 py-2 rounded-xl border border-white/20 text-gray-300 hover:bg-white/5 text-xs flex items-center gap-1.5"><ImageIcon className="w-3.5 h-3.5" /> BG</button>
           <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleBg} />
+          <input ref={spkAImgRef} type="file" accept="image/*" className="hidden" onChange={handleSpeakerImg("A")} />
+          <input ref={spkBImgRef} type="file" accept="image/*" className="hidden" onChange={handleSpeakerImg("B")} />
           <button onClick={handleRecord} className={`px-3 py-2 rounded-xl border text-xs flex items-center gap-1.5 font-bold ${isRecording?"border-red-500 bg-red-500/20 text-red-400":"border-white/20 text-gray-300 hover:bg-white/5"}`}>
-            {isRecording ? <><Square className="w-3.5 h-3.5" /> Stop & Save</> : <><Video className="w-3.5 h-3.5" /> Record</>}
+            {isRecording ? <><Square className="w-3.5 h-3.5" /> Stop & Save</> : <><Video className="w-3.5 h-3.5" /> Record Video</>}
           </button>
-          <button onClick={()=>{ const a=document.createElement("a"); a.href=bg; a.download="background.jpg"; a.click(); }} className="px-3 py-2 rounded-xl bg-primary text-white font-bold text-xs flex items-center gap-1.5">
-            <Download className="w-3.5 h-3.5" /> Export
+          <button onClick={()=>{ const a=document.createElement("a"); a.href=bg; a.download="background.jpg"; a.click(); }} className="px-3 py-2 rounded-xl border border-white/20 text-gray-300 hover:bg-white/5 font-bold text-xs flex items-center gap-1.5">
+            <Download className="w-3.5 h-3.5" /> Save BG
           </button>
         </div>
       </div>
@@ -889,6 +931,26 @@ function Step4Preview({ project }: { project: any }) {
                   </label>
                 ))}
               </div>
+              {/* Speaker images for Split/Podcast styles */}
+              <div className="space-y-1.5">
+                <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider">Speaker Images</p>
+                <p className="text-[9px] text-gray-500">Used in Split & Podcast styles</p>
+                <div className="flex flex-col gap-1.5">
+                  <button onClick={() => spkAImgRef.current?.click()}
+                    className="flex items-center gap-2 px-2 py-1.5 rounded-lg border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 text-xs hover:bg-indigo-500/20 transition-all">
+                    <ImageIcon className="w-3 h-3" />
+                    {cfg.speakerAImage ? <span className="text-indigo-400">✓ {project.speakerAName}</span> : <span>{project.speakerAName}</span>}
+                  </button>
+                  <button onClick={() => spkBImgRef.current?.click()}
+                    className="flex items-center gap-2 px-2 py-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 text-rose-300 text-xs hover:bg-rose-500/20 transition-all">
+                    <ImageIcon className="w-3 h-3" />
+                    {cfg.speakerBImage ? <span className="text-rose-400">✓ {project.speakerBName}</span> : <span>{project.speakerBName}</span>}
+                  </button>
+                  {(cfg.speakerAImage || cfg.speakerBImage) && (
+                    <button onClick={() => { set("speakerAImage",""); set("speakerBImage",""); }} className="text-[9px] text-gray-500 hover:text-red-400 text-left">Clear images</button>
+                  )}
+                </div>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -905,6 +967,8 @@ function Step4Preview({ project }: { project: any }) {
           {style===2 && <Style2 {...canvasProps} />}
           {style===3 && <Style3 {...canvasProps} />}
           {style===4 && <Style4 {...canvasProps} />}
+          {style===5 && <Style5 {...canvasProps} />}
+          {style===6 && <Style6 {...canvasProps} />}
 
           {/* Score Card Overlay (not for narrator) */}
           <AnimatePresence>
@@ -1152,6 +1216,184 @@ function Style4({ project, current, isA, isNarrator, cfg, countdown, isSpeaking,
               style={{ backgroundColor: isNarrator?`rgba(69,26,3,${cfg.subBgOpacity/100})`:isA?`rgba(3,15,69,${cfg.subBgOpacity/100})`:`rgba(69,3,15,${cfg.subBgOpacity/100})` }}>
               <div className="flex items-center gap-1.5 mb-1"><div className={`w-1.5 h-1.5 rounded-full ${isNarrator?"bg-amber-400":isA?"bg-blue-400":"bg-rose-400"}`}/><span className={`text-[9px] font-bold tracking-wider uppercase ${isNarrator?"text-amber-400":isA?"text-blue-400":"text-rose-400"}`}>{isNarrator?project.speakerNarratorName:isA?project.speakerAName:project.speakerBName}</span></div>
               <SubtitleText text={current.text} wordIdx={wordIdx} isSpeaking={isSpeaking} textClass={`text-white leading-snug ${TEXT_SIZES[cfg.textSize]}`} italicize={isNarrator} />
+            </motion.div>
+          </AnimatePresence>
+        </motion.div>
+      )}
+    </>
+  );
+}
+
+// ─── STYLE 5: Split — speaker portrait panels on sides, transcript center ──────
+function Style5({ project, current, isA, isNarrator, cfg, countdown, isSpeaking, totA, totB, wordIdx }: CP) {
+  return (
+    <>
+      {/* Topic + Timer top center */}
+      {cfg.showTopic && (
+        <motion.div drag dragMomentum={false} className="absolute top-4 left-1/2 -translate-x-1/2 z-20 cursor-move">
+          <div className="bg-black/70 backdrop-blur-md border border-white/10 rounded-2xl px-5 py-2 flex items-center gap-3">
+            <span className="text-white font-bold text-xs">{project.topic}</span>
+            {cfg.showTimer && <><div className="w-px h-4 bg-white/20"/><span className="text-yellow-400 font-mono font-bold text-sm tabular-nums">{fmt(countdown)}</span></>}
+          </div>
+        </motion.div>
+      )}
+
+      {/* Speaker A — left portrait card */}
+      <motion.div drag dragMomentum={false} className="absolute left-3 top-1/2 -translate-y-1/2 z-20 cursor-move">
+        <motion.div
+          animate={{ scale: isA && isSpeaking && !isNarrator ? 1.06 : 1 }}
+          transition={{ duration: 0.3 }}
+          className={`rounded-2xl overflow-hidden border-2 transition-all duration-300 ${isA && isSpeaking && !isNarrator ? "border-blue-400 shadow-[0_0_32px_rgba(59,130,246,0.55)]" : "border-white/10 opacity-75"}`}
+          style={{ width: 120 }}>
+          {cfg.speakerAImage ? (
+            <img src={cfg.speakerAImage} alt={project.speakerAName} className="w-full object-cover" style={{ height: 150 }} />
+          ) : (
+            <div className="w-full flex items-center justify-center bg-gradient-to-br from-blue-600 to-blue-900" style={{ height: 150 }}>
+              <span className="text-white font-black text-5xl">{project.speakerAName?.[0]?.toUpperCase()}</span>
+            </div>
+          )}
+          <div className="bg-blue-700/90 backdrop-blur px-3 py-2">
+            <p className="text-white font-bold text-xs truncate">{project.speakerAName}</p>
+            <div className="flex items-center justify-between mt-0.5">
+              <span className="text-blue-200 text-[9px]">{cfg.roleA}</span>
+              {cfg.showScores && <span className="text-white font-black text-sm tabular-nums">{totA.toFixed(1)}</span>}
+            </div>
+          </div>
+          {isA && isSpeaking && !isNarrator && cfg.showWaveform && (
+            <div className="bg-blue-900/90 py-1.5 flex justify-center">
+              <WaveformBars color="bg-blue-300" />
+            </div>
+          )}
+        </motion.div>
+      </motion.div>
+
+      {/* Speaker B — right portrait card */}
+      <motion.div drag dragMomentum={false} className="absolute right-3 top-1/2 -translate-y-1/2 z-20 cursor-move">
+        <motion.div
+          animate={{ scale: !isA && isSpeaking && !isNarrator ? 1.06 : 1 }}
+          transition={{ duration: 0.3 }}
+          className={`rounded-2xl overflow-hidden border-2 transition-all duration-300 ${!isA && isSpeaking && !isNarrator ? "border-rose-400 shadow-[0_0_32px_rgba(239,68,68,0.55)]" : "border-white/10 opacity-75"}`}
+          style={{ width: 120 }}>
+          {cfg.speakerBImage ? (
+            <img src={cfg.speakerBImage} alt={project.speakerBName} className="w-full object-cover" style={{ height: 150 }} />
+          ) : (
+            <div className="w-full flex items-center justify-center bg-gradient-to-br from-rose-600 to-rose-900" style={{ height: 150 }}>
+              <span className="text-white font-black text-5xl">{project.speakerBName?.[0]?.toUpperCase()}</span>
+            </div>
+          )}
+          <div className="bg-rose-700/90 backdrop-blur px-3 py-2">
+            <p className="text-white font-bold text-xs truncate">{project.speakerBName}</p>
+            <div className="flex items-center justify-between mt-0.5">
+              <span className="text-rose-200 text-[9px]">{cfg.roleB}</span>
+              {cfg.showScores && <span className="text-white font-black text-sm tabular-nums">{totB.toFixed(1)}</span>}
+            </div>
+          </div>
+          {!isA && isSpeaking && !isNarrator && cfg.showWaveform && (
+            <div className="bg-rose-900/90 py-1.5 flex justify-center">
+              <WaveformBars color="bg-rose-300" />
+            </div>
+          )}
+        </motion.div>
+      </motion.div>
+
+      {/* Transcript — center bottom */}
+      {cfg.showTranscript && current.text && (
+        <motion.div drag dragMomentum={false} className="absolute z-20 cursor-move"
+          style={{ bottom: `${cfg.subBottom}%`, left: `${(100 - cfg.subWidth) / 2}%`, right: `${(100 - cfg.subWidth) / 2}%` }}>
+          <AnimatePresence mode="wait">
+            <motion.div key={current.text} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
+              className={`${BOX_PAD[cfg.textSize]} rounded-2xl shadow-2xl backdrop-blur-xl border ${isNarrator ? "border-amber-500/30" : isA ? "border-blue-500/30" : "border-rose-500/30"}`}
+              style={{ backgroundColor: isNarrator ? `rgba(69,26,3,${cfg.subBgOpacity / 100})` : isA ? `rgba(3,15,69,${cfg.subBgOpacity / 100})` : `rgba(69,3,15,${cfg.subBgOpacity / 100})` }}>
+              <div className="flex items-center gap-1.5 mb-1">
+                <div className={`w-2 h-2 rounded-full ${isNarrator ? "bg-amber-400" : isA ? "bg-blue-400" : "bg-rose-400"}`} />
+                <span className={`text-[10px] font-bold tracking-wider ${isNarrator ? "text-amber-400" : isA ? "text-blue-400" : "text-rose-400"}`}>
+                  {isNarrator ? project.speakerNarratorName : isA ? project.speakerAName : project.speakerBName}
+                </span>
+              </div>
+              <SubtitleText text={current.text} wordIdx={wordIdx} isSpeaking={isSpeaking} textClass={`text-white ${TEXT_SIZES[cfg.textSize]}`} italicize={isNarrator} />
+            </motion.div>
+          </AnimatePresence>
+        </motion.div>
+      )}
+    </>
+  );
+}
+
+// ─── STYLE 6: Podcast — centered avatar with animated equalizer ───────────────
+function Style6({ project, current, isA, isNarrator, cfg, countdown, isSpeaking, totA, totB, wordIdx }: CP) {
+  const activeName = isNarrator ? (project.speakerNarratorName || "Narrator") : isA ? project.speakerAName : project.speakerBName;
+  const accentGrad = isNarrator ? "from-amber-500 to-orange-600" : isA ? "from-blue-500 to-indigo-700" : "from-rose-500 to-pink-700";
+  const accentRing = isNarrator ? "ring-amber-400" : isA ? "ring-blue-400" : "ring-rose-400";
+  const activeImg = isNarrator ? "" : isA ? cfg.speakerAImage : cfg.speakerBImage;
+
+  return (
+    <>
+      {/* Radial dark vignette */}
+      <div className="absolute inset-0 z-10 pointer-events-none"
+        style={{ background: "radial-gradient(ellipse at center, transparent 25%, rgba(0,0,0,0.65) 100%)" }} />
+
+      {/* Top: Topic + Timer */}
+      <motion.div drag dragMomentum={false} className="absolute top-4 left-1/2 -translate-x-1/2 z-20 cursor-move flex items-center gap-2">
+        {cfg.showTopic && (
+          <div className="bg-black/70 backdrop-blur border border-white/10 rounded-2xl px-5 py-2">
+            <span className="text-white font-bold text-xs tracking-wide">{project.topic}</span>
+          </div>
+        )}
+        {cfg.showTimer && (
+          <div className="bg-black/70 backdrop-blur border border-white/10 rounded-xl px-3 py-2">
+            <span className="text-yellow-400 font-mono font-bold text-sm tabular-nums">{fmt(countdown)}</span>
+          </div>
+        )}
+      </motion.div>
+
+      {/* Center: Avatar + name + equalizer */}
+      <motion.div drag dragMomentum={false} className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 cursor-move flex flex-col items-center">
+        <motion.div
+          animate={isSpeaking ? { scale: [1, 1.05, 1] } : { scale: 1 }}
+          transition={{ repeat: Infinity, duration: 1.8, ease: "easeInOut" }}
+          className={`w-28 h-28 sm:w-36 sm:h-36 rounded-full bg-gradient-to-br ${accentGrad} flex items-center justify-center shadow-2xl ring-4 ring-offset-2 ring-offset-transparent ${isSpeaking ? accentRing : "ring-white/10"} overflow-hidden border-2 border-white/20`}>
+          {activeImg ? (
+            <img src={activeImg} alt={activeName} className="w-full h-full object-cover" />
+          ) : (
+            <span className="text-white font-black text-5xl">{activeName[0]?.toUpperCase()}</span>
+          )}
+        </motion.div>
+        <motion.div className="mt-3 text-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+          <p className="text-white font-black text-base drop-shadow-lg">{activeName}</p>
+          <p className={`text-[10px] font-bold tracking-wider mt-0.5 ${isNarrator ? "text-amber-300" : isA ? "text-blue-300" : "text-rose-300"}`}>
+            {isNarrator ? "NARRATOR" : isA ? cfg.roleA : cfg.roleB}
+          </p>
+        </motion.div>
+        {cfg.showWaveform && isSpeaking && (
+          <div className="mt-3">
+            <WaveformBars color={isNarrator ? "bg-amber-400" : isA ? "bg-blue-400" : "bg-rose-400"} />
+          </div>
+        )}
+      </motion.div>
+
+      {/* Score pills — left side */}
+      {cfg.showScores && (
+        <motion.div drag dragMomentum={false} className="absolute left-4 top-1/2 -translate-y-1/2 z-20 cursor-move space-y-2">
+          <div className={`bg-blue-600/80 backdrop-blur rounded-xl px-3 py-1.5 flex items-center gap-2 transition-all ${isA && isSpeaking && !isNarrator ? "ring-2 ring-blue-400 shadow-[0_0_20px_rgba(59,130,246,0.4)]" : ""}`}>
+            <span className="text-blue-200 text-[9px] font-bold truncate max-w-[60px]">{project.speakerAName}</span>
+            <span className="text-white font-black text-sm tabular-nums ml-auto">{totA.toFixed(1)}</span>
+          </div>
+          <div className={`bg-rose-600/80 backdrop-blur rounded-xl px-3 py-1.5 flex items-center gap-2 transition-all ${!isA && !isNarrator && isSpeaking ? "ring-2 ring-rose-400 shadow-[0_0_20px_rgba(239,68,68,0.4)]" : ""}`}>
+            <span className="text-rose-200 text-[9px] font-bold truncate max-w-[60px]">{project.speakerBName}</span>
+            <span className="text-white font-black text-sm tabular-nums ml-auto">{totB.toFixed(1)}</span>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Transcript bottom */}
+      {cfg.showTranscript && current.text && (
+        <motion.div drag dragMomentum={false} className="absolute z-20 cursor-move"
+          style={{ bottom: `${cfg.subBottom}%`, left: `${(100 - cfg.subWidth) / 2}%`, right: `${(100 - cfg.subWidth) / 2}%` }}>
+          <AnimatePresence mode="wait">
+            <motion.div key={current.text} initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.96 }}
+              className={`${BOX_PAD[cfg.textSize]} rounded-2xl shadow-2xl backdrop-blur-xl border ${isNarrator ? "border-amber-500/30" : isA ? "border-blue-500/30" : "border-rose-500/30"}`}
+              style={{ backgroundColor: `rgba(0,0,0,${cfg.subBgOpacity / 100})` }}>
+              <SubtitleText text={current.text} wordIdx={wordIdx} isSpeaking={isSpeaking} textClass={`text-white text-center ${TEXT_SIZES[cfg.textSize]}`} italicize={isNarrator} />
             </motion.div>
           </AnimatePresence>
         </motion.div>
