@@ -96,19 +96,19 @@ export function useUpdateDialogue() {
 export function useGenerateScript() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (projectId: number) => {
+    mutationFn: async ({ projectId, context }: { projectId: number; context?: string }) => {
       const url = buildUrl(api.ai.generateScript.path, { id: projectId });
       const res = await fetch(url, {
         method: api.ai.generateScript.method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ context }),
         credentials: "include",
       });
       if (!res.ok) throw new Error("Failed to generate script");
       return api.ai.generateScript.responses[200].parse(await res.json());
     },
-    onSuccess: (_, projectId) => {
-      queryClient.invalidateQueries({ queryKey: [api.projects.get.path, projectId] });
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: [api.projects.get.path, variables.projectId] });
     },
   });
 }
@@ -146,6 +146,26 @@ export function useGenerateAudio() {
       });
       if (!res.ok) throw new Error("Failed to generate audio");
       return api.ai.generateAudio.responses[200].parse(await res.json());
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: [api.projects.get.path, variables.projectId] });
+    },
+  });
+}
+
+export function useGenerateTranscript() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ dialogueId, projectId }: { dialogueId: number, projectId: number }) => {
+      const url = buildUrl(api.ai.generateTranscript.path, { id: dialogueId });
+      const res = await fetch(url, {
+        method: api.ai.generateTranscript.method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to generate transcript");
+      return api.ai.generateTranscript.responses[200].parse(await res.json());
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: [api.projects.get.path, variables.projectId] });
