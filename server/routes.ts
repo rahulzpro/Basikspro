@@ -14,14 +14,21 @@ const ai = new GoogleGenAI({
   },
 });
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+// OpenAI is optional — only used as fallback
+let openai: OpenAI | null = null;
+try {
+  if (process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY) {
+    openai = new OpenAI({
+      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
+      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+    });
+  }
+} catch { /* OpenAI not configured */ }
 
 // ─── Audio generation helpers ────────────────────────────────────────────────
 
 async function generateOpenAIAudio(text: string, voice: string): Promise<string> {
+  if (!openai) throw new Error("OpenAI is not configured — set OPENAI_API_KEY env var");
   const audioResponse = await openai.audio.speech.create({
     model: "tts-1",
     voice: voice as any,
@@ -275,11 +282,18 @@ Just output the rewritten text and nothing else.`;
           // openai (default)
           dataUrl = await generateOpenAIAudio(dbDialogue.text, voice);
         }
-      } catch (providerErr) {
-        console.warn(`${provider} audio failed, falling back to OpenAI:`, providerErr);
-        // Fallback to OpenAI
-        const fallbackVoice = dbDialogue.speaker === 'A' ? 'alloy' : dbDialogue.speaker === 'B' ? 'echo' : 'shimmer';
-        dataUrl = await generateOpenAIAudio(dbDialogue.text, fallbackVoice);
+      } catch (providerErr: any) {
+        console.warn(`${provider} audio failed:`, providerErr?.message);
+        // Fallback to Gemini TTS if primary provider fails
+        if (provider !== 'gemini') {
+          const fallbackVoice = dbDialogue.speaker === 'A' ? 'Kore' : dbDialogue.speaker === 'B' ? 'Charon' : 'Aoede';
+          dataUrl = await generateGeminiTTSAudio(dbDialogue.text, fallbackVoice);
+        } else if (openai) {
+          const fallbackVoice = dbDialogue.speaker === 'A' ? 'alloy' : dbDialogue.speaker === 'B' ? 'echo' : 'shimmer';
+          dataUrl = await generateOpenAIAudio(dbDialogue.text, fallbackVoice);
+        } else {
+          throw providerErr;
+        }
       }
 
       const updated = await storage.updateDialogue(dialogueId, { audioUrl: dataUrl });

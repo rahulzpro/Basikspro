@@ -207,29 +207,34 @@ export default function Wizard() {
 
   return (
     <div className="min-h-screen flex flex-col max-w-[1600px] mx-auto">
-      <header className="sticky top-0 z-50 bg-background/80 backdrop-blur-xl border-b border-white/5 px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button onClick={() => setLocation("/")} className="p-2 hover:bg-white/5 rounded-full text-muted-foreground hover:text-white"><ArrowLeft className="w-5 h-5" /></button>
-          <h1 className="font-display font-bold text-base text-white hidden sm:block truncate max-w-[200px]">{project.topic !== "Untitled Debate" ? project.topic : "New Debate"}</h1>
+      <header className="sticky top-0 z-50 bg-background/80 backdrop-blur-xl border-b border-white/5 px-4 py-2.5 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2.5 shrink-0">
+          <button onClick={() => setLocation("/")} className="p-2 hover:bg-white/5 rounded-xl text-muted-foreground hover:text-white transition-colors"><ArrowLeft className="w-4 h-4" /></button>
+          <div className="hidden sm:flex items-center gap-2">
+            <div className="w-7 h-7 bg-gradient-to-br from-primary to-indigo-600 rounded-lg flex items-center justify-center">
+              <Video className="w-3.5 h-3.5 text-white" />
+            </div>
+            <h1 className="font-display font-bold text-sm text-white truncate max-w-[180px]">{project.topic !== "Untitled Debate" ? project.topic : "New Debate"}</h1>
+          </div>
         </div>
-        <nav>
-          <ol className="flex items-center gap-1 sm:gap-4">
-            {steps.map((step, idx) => {
+        <nav className="flex-1 flex justify-center">
+          <ol className="flex items-center bg-black/30 rounded-xl border border-white/5 p-1 gap-0.5">
+            {steps.map((step) => {
               const isActive = currentStep === step.num, isPast = currentStep > step.num;
               const Icon = step.icon;
               return (
-                <li key={step.num} className="flex items-center">
-                  <button onClick={() => setCurrentStep(step.num)} className={`flex items-center justify-center w-9 h-9 rounded-full border-2 transition-all ${isActive ? "border-primary bg-primary/20 text-primary" : isPast ? "border-primary bg-primary text-white" : "border-white/10 text-gray-500"}`}>
-                    {isPast ? <Check className="w-4 h-4" /> : <Icon className="w-4 h-4" />}
+                <li key={step.num}>
+                  <button onClick={() => setCurrentStep(step.num)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${isActive ? "bg-primary text-white shadow-md shadow-primary/30" : isPast ? "text-primary hover:bg-white/5" : "text-gray-500 hover:text-gray-300 hover:bg-white/5"}`}>
+                    {isPast ? <Check className="w-3.5 h-3.5" /> : <Icon className="w-3.5 h-3.5" />}
+                    <span className="hidden sm:inline">{step.title}</span>
                   </button>
-                  <span className={`hidden lg:block ml-2 text-xs font-medium ${isActive ? "text-white" : isPast ? "text-gray-300" : "text-gray-600"}`}>{step.title}</span>
-                  {idx < steps.length - 1 && <div className={`w-5 sm:w-10 h-0.5 mx-1 sm:mx-3 rounded-full ${isPast ? "bg-primary" : "bg-white/10"}`} />}
                 </li>
               );
             })}
           </ol>
         </nav>
-        <div className="w-9" />
+        <div className="w-9 shrink-0" />
       </header>
 
       <main className="flex-1 p-4 sm:p-6 lg:p-10 overflow-x-hidden">
@@ -271,8 +276,16 @@ function Step1Setup({ project, onNext }: { project: any; onNext: () => void }) {
 
   return (
     <div className="max-w-xl mx-auto glass-panel p-6 sm:p-10 rounded-3xl">
-      <h2 className="text-2xl font-display font-bold text-white mb-1">Configure Debate</h2>
-      <p className="text-muted-foreground mb-8 text-sm">Set the topic, duration, AI model and optional context.</p>
+      <div className="flex items-center gap-3 mb-1">
+        <div className="w-10 h-10 bg-gradient-to-br from-primary/20 to-indigo-600/20 rounded-xl flex items-center justify-center ring-1 ring-primary/20">
+          <Settings className="w-5 h-5 text-primary" />
+        </div>
+        <div>
+          <h2 className="text-2xl font-display font-bold text-white">Configure Debate</h2>
+          <p className="text-muted-foreground text-xs">Set topic, duration, model & context</p>
+        </div>
+      </div>
+      <div className="h-px bg-gradient-to-r from-transparent via-white/10 to-transparent my-5" />
       <div className="space-y-7">
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-2">Debate Topic</label>
@@ -357,11 +370,17 @@ function Step2Script({ project, onNext }: { project: any; onNext: () => void }) 
 
   if (!project.dialogues?.length) return (
     <div className="flex flex-col items-center justify-center text-center max-w-md mx-auto py-16">
-      <div className="w-20 h-20 bg-primary/20 rounded-full flex items-center justify-center mb-6"><FileText className="w-10 h-10 text-primary" /></div>
-      <h2 className="text-2xl font-bold text-white mb-3">Generate Script</h2>
-      <p className="text-muted-foreground mb-7 text-sm">AI will draft the debate with narrator for: <strong className="text-white block mt-1">"{project.topic}"</strong></p>
-      <button onClick={() => generateScript.mutateAsync({ projectId: project.id, context: localStorage.getItem(`ctx-${project.id}`) || undefined })} disabled={generateScript.isPending} className="px-7 py-3.5 bg-gradient-to-r from-primary to-indigo-600 text-white font-bold rounded-xl flex items-center gap-2">
-        {generateScript.isPending ? <><Loader2 className="w-5 h-5 animate-spin" /> Generating...</> : <>Generate Script with AI</>}
+      <div className="w-20 h-20 bg-gradient-to-br from-primary/20 to-indigo-600/20 rounded-full flex items-center justify-center mb-6 ring-2 ring-primary/10">
+        <FileText className="w-10 h-10 text-primary" />
+      </div>
+      <h2 className="text-2xl font-display font-bold text-white mb-3">Generate Script</h2>
+      <p className="text-muted-foreground mb-7 text-sm leading-relaxed">AI will draft the debate with narrator intro for each argument round.</p>
+      <div className="glass-panel rounded-xl px-5 py-3 mb-7 border border-primary/10">
+        <p className="text-primary text-xs font-bold tracking-wider uppercase mb-0.5">Topic</p>
+        <p className="text-white text-sm font-medium">"{project.topic}"</p>
+      </div>
+      <button onClick={() => generateScript.mutateAsync({ projectId: project.id, context: localStorage.getItem(`ctx-${project.id}`) || undefined })} disabled={generateScript.isPending} className="px-7 py-3.5 bg-gradient-to-r from-primary to-indigo-600 text-white font-bold rounded-xl flex items-center gap-2 hover:shadow-[0_0_25px_rgba(124,58,237,0.4)] transition-shadow">
+        {generateScript.isPending ? <><Loader2 className="w-5 h-5 animate-spin" /> Generating...</> : <><Wand2 className="w-5 h-5" /> Generate Script with AI</>}
       </button>
     </div>
   );
@@ -596,7 +615,15 @@ function Step3Audio({ project, onNext }: { project: any; onNext: () => void }) {
   return (
     <div className="max-w-4xl mx-auto flex flex-col gap-5" style={{ height: "calc(100vh - 130px)" }}>
       <div className="flex justify-between items-center shrink-0">
-        <div><h2 className="text-2xl font-display font-bold text-white">Voice Synthesis</h2><p className="text-muted-foreground text-sm">Choose provider, assign voices, generate simultaneously.</p></div>
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-gradient-to-br from-violet-500/20 to-indigo-600/20 rounded-xl flex items-center justify-center ring-1 ring-violet-500/20">
+            <Mic className="w-5 h-5 text-violet-400" />
+          </div>
+          <div>
+            <h2 className="text-xl font-display font-bold text-white">Voice Synthesis</h2>
+            <p className="text-muted-foreground text-xs">Pick provider & voices, generate in parallel</p>
+          </div>
+        </div>
         <button onClick={onNext} disabled={!allDone} className="px-5 py-2 bg-white text-black font-bold rounded-xl text-sm hover:bg-gray-200 disabled:opacity-40 flex items-center gap-1.5">Next <ArrowRight className="w-4 h-4" /></button>
       </div>
 
@@ -841,30 +868,36 @@ function Step4Preview({ project }: { project: any }) {
   const canvasProps = { project, current, isA, isNarrator, cfg, countdown, isSpeaking: phase==="speaking", totA, totB, wordIdx };
 
   return (
-    <div className="max-w-7xl mx-auto flex flex-col gap-3" style={{ height: "calc(100vh - 110px)" }}>
-      {/* Controls */}
+    <div className="max-w-7xl mx-auto flex flex-col gap-2.5" style={{ height: "calc(100vh - 100px)" }}>
+      {/* Controls toolbar */}
       <div className="flex items-center justify-between gap-2 flex-wrap shrink-0">
-        <div>
-          <h2 className="text-xl font-display font-bold text-white">Video Canvas</h2>
-          <p className="text-muted-foreground text-xs hidden sm:block">Upload BG · Pick style · Adjust overlay</p>
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 bg-gradient-to-br from-emerald-500/20 to-teal-600/20 rounded-lg flex items-center justify-center ring-1 ring-emerald-500/20">
+            <LayoutTemplate className="w-4 h-4 text-emerald-400" />
+          </div>
+          <div>
+            <h2 className="text-base font-display font-bold text-white leading-tight">Video Canvas</h2>
+            <p className="text-muted-foreground text-[10px] hidden sm:block">Style · Overlay · Background · Record</p>
+          </div>
         </div>
-        <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="flex items-center gap-1 flex-wrap">
           {/* Style tabs */}
-          <div className="flex bg-black/40 rounded-xl border border-white/10 p-0.5 gap-0.5">
+          <div className="flex bg-black/40 rounded-lg border border-white/10 p-0.5 gap-0.5">
             {([1,2,3,4,5,6] as const).map(s => (
-              <button key={s} onClick={()=>setStyle(s)} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${style===s?"bg-primary text-white":"text-gray-400 hover:text-white"}`}>{styleNames[s]}</button>
+              <button key={s} onClick={()=>setStyle(s)} className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-all ${style===s?"bg-primary text-white shadow-md shadow-primary/30":"text-gray-500 hover:text-white"}`}>{styleNames[s]}</button>
             ))}
           </div>
-          <button onClick={()=>setShowSettings(!showSettings)} className="px-3 py-2 rounded-xl border border-white/20 text-gray-300 hover:bg-white/5 text-xs flex items-center gap-1.5"><Settings className="w-3.5 h-3.5" /> Overlay</button>
-          <button onClick={()=>fileRef.current?.click()} className="px-3 py-2 rounded-xl border border-white/20 text-gray-300 hover:bg-white/5 text-xs flex items-center gap-1.5"><ImageIcon className="w-3.5 h-3.5" /> BG</button>
+          <div className="w-px h-5 bg-white/10 mx-0.5 hidden sm:block" />
+          <button onClick={()=>setShowSettings(!showSettings)} className={`px-2.5 py-1.5 rounded-lg border text-[10px] flex items-center gap-1 font-medium transition-all ${showSettings?"border-primary bg-primary/10 text-primary":"border-white/10 text-gray-400 hover:text-white hover:bg-white/5"}`}><Settings className="w-3 h-3" /> Overlay</button>
+          <button onClick={()=>fileRef.current?.click()} className="px-2.5 py-1.5 rounded-lg border border-white/10 text-gray-400 hover:text-white hover:bg-white/5 text-[10px] flex items-center gap-1 font-medium"><ImageIcon className="w-3 h-3" /> BG</button>
           <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleBg} />
           <input ref={spkAImgRef} type="file" accept="image/*" className="hidden" onChange={handleSpeakerImg("A")} />
           <input ref={spkBImgRef} type="file" accept="image/*" className="hidden" onChange={handleSpeakerImg("B")} />
-          <button onClick={handleRecord} className={`px-3 py-2 rounded-xl border text-xs flex items-center gap-1.5 font-bold ${isRecording?"border-red-500 bg-red-500/20 text-red-400":"border-white/20 text-gray-300 hover:bg-white/5"}`}>
-            {isRecording ? <><Square className="w-3.5 h-3.5" /> Stop & Save</> : <><Video className="w-3.5 h-3.5" /> Record Video</>}
+          <button onClick={handleRecord} className={`px-2.5 py-1.5 rounded-lg border text-[10px] flex items-center gap-1 font-bold transition-all ${isRecording?"border-red-500 bg-red-500/20 text-red-400 animate-pulse":"border-white/10 text-gray-400 hover:text-white hover:bg-white/5"}`}>
+            {isRecording ? <><Square className="w-3 h-3" /> Stop</> : <><Video className="w-3 h-3" /> Record</>}
           </button>
-          <button onClick={()=>{ const a=document.createElement("a"); a.href=bg; a.download="background.jpg"; a.click(); }} className="px-3 py-2 rounded-xl border border-white/20 text-gray-300 hover:bg-white/5 font-bold text-xs flex items-center gap-1.5">
-            <Download className="w-3.5 h-3.5" /> Save BG
+          <button onClick={()=>{ const a=document.createElement("a"); a.href=bg; a.download="background.jpg"; a.click(); }} className="px-2.5 py-1.5 rounded-lg border border-white/10 text-gray-400 hover:text-white hover:bg-white/5 text-[10px] flex items-center gap-1 font-medium">
+            <Download className="w-3 h-3" />
           </button>
         </div>
       </div>
@@ -984,13 +1017,15 @@ function Step4Preview({ project }: { project: any }) {
           </AnimatePresence>
 
           {/* Playback bar */}
-          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-black/70 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/15">
-            <button onClick={handlePrev} className="p-1.5 text-white hover:bg-white/20 rounded-full"><ArrowLeft className="w-4 h-4" /></button>
-            <button onClick={handlePlay} className="px-4 py-1 bg-white text-black font-bold rounded-full text-xs hover:bg-gray-200 flex items-center gap-1.5">
-              {phase!=="idle" ? <><Pause className="w-3.5 h-3.5"/>Pause</> : <><Play className="w-3.5 h-3.5"/>Play</>}
+          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 bg-black/75 backdrop-blur-xl px-2.5 py-1.5 rounded-full border border-white/10 shadow-xl">
+            <button onClick={handlePrev} className="p-1 text-white/70 hover:bg-white/20 hover:text-white rounded-full transition-colors"><ArrowLeft className="w-3.5 h-3.5" /></button>
+            <button onClick={handlePlay} className={`px-4 py-1 font-bold rounded-full text-xs flex items-center gap-1.5 transition-all ${phase!=="idle" ? "bg-red-500 text-white hover:bg-red-600" : "bg-white text-black hover:bg-gray-200"}`}>
+              {phase!=="idle" ? <><Pause className="w-3 h-3"/>Stop</> : <><Play className="w-3 h-3"/>Play</>}
             </button>
-            <button onClick={handleNext} className="p-1.5 text-white hover:bg-white/20 rounded-full"><ArrowRight className="w-4 h-4" /></button>
-            <span className="text-gray-400 text-[10px] tabular-nums ml-0.5">{idx+1}/{dialogues.length}</span>
+            <button onClick={handleNext} className="p-1 text-white/70 hover:bg-white/20 hover:text-white rounded-full transition-colors"><ArrowRight className="w-3.5 h-3.5" /></button>
+            <div className="w-px h-4 bg-white/15" />
+            <span className="text-gray-500 text-[9px] font-bold tabular-nums">{idx+1}/{dialogues.length}</span>
+            {phase==="speaking" && <span className="text-primary text-[9px] font-mono font-bold tabular-nums">{fmt(countdown)}</span>}
           </div>
         </div>
       </div>
